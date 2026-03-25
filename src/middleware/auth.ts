@@ -7,7 +7,7 @@ export function apiKeyAuth(req: Request, res: Response, next: NextFunction): voi
     return;
   }
 
-  const API_KEY = process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY;
+  const API_KEY = process.env.CLOUDFLARE_SERVICE_API_KEY;
   const apiKey = req.headers["x-api-key"] as string | undefined;
 
   if (!API_KEY) {

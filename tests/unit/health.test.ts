@@ -14,7 +14,7 @@ function createApp() {
 
 describe("GET /health", () => {
   beforeEach(() => {
-    process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY = "test-api-key";
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
   });
 
   it("returns ok without auth", async () => {

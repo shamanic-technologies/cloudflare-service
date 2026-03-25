@@ -5,6 +5,7 @@ import { UploadRequestSchema } from "../schemas.js";
 import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun } from "../lib/runs-client.js";
 import { uploadToR2 } from "../lib/r2-client.js";
+import type { R2Config } from "../lib/r2-client.js";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest } from "../types.js";
@@ -78,15 +79,25 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       featureSlug: authReq.featureSlug,
     };
 
-    const [accessKeyResult, secretKeyResult] = await Promise.all([
+    const [accessKeyResult, secretKeyResult, accountIdResult, bucketNameResult, publicDomainResult] = await Promise.all([
       decryptKey("cloudflare-r2-access-key-id", orgId, userId, callerContext),
       decryptKey("cloudflare-r2-secret-access-key", orgId, userId, callerContext),
+      decryptKey("cloudflare-r2-account-id", orgId, userId, callerContext),
+      decryptKey("cloudflare-r2-bucket-name", orgId, userId, callerContext),
+      decryptKey("cloudflare-r2-public-domain", orgId, userId, callerContext),
     ]);
+
+    const r2Config: R2Config = {
+      accessKeyId: accessKeyResult.key,
+      secretAccessKey: secretKeyResult.key,
+      accountId: accountIdResult.key,
+      bucketName: bucketNameResult.key,
+      publicDomain: publicDomainResult.key,
+    };
 
     // Upload to R2
     const publicUrl = await uploadToR2(
-      accessKeyResult.key,
-      secretKeyResult.key,
+      r2Config,
       r2Key,
       fileBuffer,
       resolvedContentType

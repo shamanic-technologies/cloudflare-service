@@ -4,6 +4,7 @@ import { serviceAuth } from "../middleware/auth.js";
 import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun } from "../lib/runs-client.js";
 import { deleteFromR2 } from "../lib/r2-client.js";
+import type { R2Config } from "../lib/r2-client.js";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest } from "../types.js";
@@ -93,13 +94,24 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
       featureSlug: authReq.featureSlug,
     };
 
-    const [accessKeyResult, secretKeyResult] = await Promise.all([
+    const [accessKeyResult, secretKeyResult, accountIdResult, bucketNameResult, publicDomainResult] = await Promise.all([
       decryptKey("cloudflare-r2-access-key-id", orgId, userId, callerContext),
       decryptKey("cloudflare-r2-secret-access-key", orgId, userId, callerContext),
+      decryptKey("cloudflare-r2-account-id", orgId, userId, callerContext),
+      decryptKey("cloudflare-r2-bucket-name", orgId, userId, callerContext),
+      decryptKey("cloudflare-r2-public-domain", orgId, userId, callerContext),
     ]);
 
+    const r2Config: R2Config = {
+      accessKeyId: accessKeyResult.key,
+      secretAccessKey: secretKeyResult.key,
+      accountId: accountIdResult.key,
+      bucketName: bucketNameResult.key,
+      publicDomain: publicDomainResult.key,
+    };
+
     // Delete from R2
-    await deleteFromR2(accessKeyResult.key, secretKeyResult.key, record.r2Key);
+    await deleteFromR2(r2Config, record.r2Key);
 
     // Delete metadata
     await db.delete(files).where(eq(files.id, req.params.id as string));

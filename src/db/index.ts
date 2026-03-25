@@ -6,11 +6,11 @@ let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 export function getDb() {
   if (!_db) {
-    const DATABASE_URL = process.env.DATABASE_URL;
-    if (!DATABASE_URL) {
-      throw new Error("DATABASE_URL environment variable is required");
+    const CLOUDFLARE_SERVICE_DATABASE_URL = process.env.CLOUDFLARE_SERVICE_DATABASE_URL;
+    if (!CLOUDFLARE_SERVICE_DATABASE_URL) {
+      throw new Error("CLOUDFLARE_SERVICE_DATABASE_URL environment variable is required");
     }
-    const client = postgres(DATABASE_URL);
+    const client = postgres(CLOUDFLARE_SERVICE_DATABASE_URL);
     _db = drizzle(client, { schema });
   }
   return _db;

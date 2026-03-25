@@ -17,7 +17,7 @@ function createApp() {
 
 describe("apiKeyAuth middleware", () => {
   beforeEach(() => {
-    process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY = "test-api-key";
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
   });
 
   it("rejects requests without API key", async () => {
@@ -49,7 +49,7 @@ describe("apiKeyAuth middleware", () => {
 
 describe("serviceAuth middleware", () => {
   beforeEach(() => {
-    process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY = "test-api-key";
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
   });
 
   it("rejects missing x-org-id", async () => {

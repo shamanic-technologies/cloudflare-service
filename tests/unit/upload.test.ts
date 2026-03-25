@@ -66,7 +66,7 @@ describe("POST /upload", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY = "test-api-key";
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
   });
 
   afterEach(() => {

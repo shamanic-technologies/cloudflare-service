@@ -67,7 +67,7 @@ const mockFile = {
 describe("GET /files/:id", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY = "test-api-key";
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
   });
 
   it("returns file metadata", async () => {
@@ -112,7 +112,7 @@ describe("GET /files/:id", () => {
 describe("DELETE /files/:id", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CLOUDFLARE_STORAGE_SERVICE_API_KEY = "test-api-key";
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
   });
 
   it("deletes file and returns 204", async () => {

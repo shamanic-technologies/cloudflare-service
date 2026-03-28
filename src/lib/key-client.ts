@@ -6,7 +6,7 @@ interface CallerContext {
   callerPath: string;
   campaignId?: string;
   brandId?: string;
-  workflowName?: string;
+  workflowSlug?: string;
   featureSlug?: string;
 }
 
@@ -26,7 +26,7 @@ export async function decryptKey(
       "X-Caller-Path": caller.callerPath,
       ...(caller.campaignId ? { "x-campaign-id": caller.campaignId } : {}),
       ...(caller.brandId ? { "x-brand-id": caller.brandId } : {}),
-      ...(caller.workflowName ? { "x-workflow-name": caller.workflowName } : {}),
+      ...(caller.workflowSlug ? { "x-workflow-slug": caller.workflowSlug } : {}),
       ...(caller.featureSlug ? { "x-feature-slug": caller.featureSlug } : {}),
     },
   });

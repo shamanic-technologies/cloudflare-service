@@ -48,11 +48,11 @@ export function serviceAuth(req: Request, res: Response, next: NextFunction): vo
 
   const campaignId = req.headers["x-campaign-id"] as string | undefined;
   const brandId = req.headers["x-brand-id"] as string | undefined;
-  const workflowName = req.headers["x-workflow-name"] as string | undefined;
+  const workflowSlug = req.headers["x-workflow-slug"] as string | undefined;
   const featureSlug = req.headers["x-feature-slug"] as string | undefined;
   if (campaignId) authReq.campaignId = campaignId;
   if (brandId) authReq.brandId = brandId;
-  if (workflowName) authReq.workflowName = workflowName;
+  if (workflowSlug) authReq.workflowSlug = workflowSlug;
   if (featureSlug) authReq.featureSlug = featureSlug;
 
   next();

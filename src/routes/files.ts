@@ -90,7 +90,7 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
       callerPath: `/files/${req.params.id}`,
       campaignId: authReq.campaignId,
       brandId: authReq.brandId,
-      workflowName: authReq.workflowName,
+      workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
     };
 

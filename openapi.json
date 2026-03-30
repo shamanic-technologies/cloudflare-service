@@ -388,6 +388,148 @@
           }
         }
       }
+    },
+    "/images/{key}": {
+      "get": {
+        "summary": "Serve an image from R2 with optional resizing",
+        "description": "Fetches an image from R2 by key. Supports on-the-fly resizing via query params: w (width), h (height), fit (cover|contain|fill|inside|outside), format (webp|avif|png|jpeg), quality (1-100).",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "R2 object key (full path)"
+            },
+            "required": true,
+            "name": "key",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Max width in pixels (1-4096)"
+            },
+            "required": false,
+            "name": "w",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Max height in pixels (1-4096)"
+            },
+            "required": false,
+            "name": "h",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cover",
+                "contain",
+                "fill",
+                "inside",
+                "outside"
+              ],
+              "description": "Resize fit mode"
+            },
+            "required": false,
+            "name": "fit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "webp",
+                "avif",
+                "png",
+                "jpeg"
+              ],
+              "description": "Output format"
+            },
+            "required": false,
+            "name": "format",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Output quality (1-100)"
+            },
+            "required": false,
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID"
+            },
+            "required": true,
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID"
+            },
+            "required": true,
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Run ID from runs-service"
+            },
+            "required": true,
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image binary",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Image not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Image processing failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -120,6 +120,41 @@ registry.registerPath({
   },
 });
 
+// --- Get Image (with optional resizing) ---
+
+registry.registerPath({
+  method: "get",
+  path: "/images/{key}",
+  summary: "Serve an image from R2 with optional resizing",
+  description: "Fetches an image from R2 by key. Supports on-the-fly resizing via query params: w (width), h (height), fit (cover|contain|fill|inside|outside), format (webp|avif|png|jpeg), quality (1-100).",
+  security: [{ [ApiKeyHeader.name]: [] }],
+  request: {
+    headers: z.object(identityHeaders),
+    params: z.object({ key: z.string().openapi({ description: "R2 object key (full path)" }) }),
+    query: z.object({
+      w: z.string().optional().openapi({ description: "Max width in pixels (1-4096)" }),
+      h: z.string().optional().openapi({ description: "Max height in pixels (1-4096)" }),
+      fit: z.enum(["cover", "contain", "fill", "inside", "outside"]).optional().openapi({ description: "Resize fit mode" }),
+      format: z.enum(["webp", "avif", "png", "jpeg"]).optional().openapi({ description: "Output format" }),
+      quality: z.string().optional().openapi({ description: "Output quality (1-100)" }),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Image binary",
+      content: { "image/*": { schema: z.string().openapi({ type: "string", format: "binary" }) } },
+    },
+    404: {
+      description: "Image not found",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    502: {
+      description: "Image processing failed",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
 // --- Delete File ---
 
 registry.registerPath({

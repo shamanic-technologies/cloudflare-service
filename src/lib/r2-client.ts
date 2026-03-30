@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 
 export interface R2Config {
   accessKeyId: string;
@@ -37,6 +37,36 @@ export async function uploadToR2(
   );
 
   return `https://${config.publicDomain}/${key}`;
+}
+
+export interface R2Object {
+  body: Buffer;
+  contentType: string;
+}
+
+export async function getFromR2(
+  config: R2Config,
+  key: string
+): Promise<R2Object | null> {
+  const s3 = createS3Client(config);
+
+  const response = await s3.send(
+    new GetObjectCommand({
+      Bucket: config.bucketName,
+      Key: key,
+    })
+  ).catch((err: unknown) => {
+    if (err instanceof Error && err.name === "NoSuchKey") return null;
+    throw err;
+  });
+
+  if (!response || !response.Body) return null;
+
+  const bodyBytes = await response.Body.transformToByteArray();
+  return {
+    body: Buffer.from(bodyBytes),
+    contentType: response.ContentType || "application/octet-stream",
+  };
 }
 
 export async function deleteFromR2(

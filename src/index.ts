@@ -5,6 +5,7 @@ import { apiKeyAuth } from "./middleware/auth.js";
 import healthRouter from "./routes/health.js";
 import uploadRouter from "./routes/upload.js";
 import filesRouter from "./routes/files.js";
+import imagesRouter from "./routes/images.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -27,6 +28,7 @@ app.get("/openapi.json", (_req, res) => {
 app.use(healthRouter);
 app.use(uploadRouter);
 app.use(filesRouter);
+app.use(imagesRouter);
 
 app.listen(PORT, () => {
   console.log(`cloudflare-storage-service listening on port ${PORT}`);

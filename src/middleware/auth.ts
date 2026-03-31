@@ -47,11 +47,14 @@ export function serviceAuth(req: Request, res: Response, next: NextFunction): vo
   authReq.runId = runId;
 
   const campaignId = req.headers["x-campaign-id"] as string | undefined;
-  const brandId = req.headers["x-brand-id"] as string | undefined;
+  const rawBrandId = req.headers["x-brand-id"] as string | undefined;
+  const brandIds = rawBrandId
+    ? rawBrandId.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
   const workflowSlug = req.headers["x-workflow-slug"] as string | undefined;
   const featureSlug = req.headers["x-feature-slug"] as string | undefined;
   if (campaignId) authReq.campaignId = campaignId;
-  if (brandId) authReq.brandId = brandId;
+  if (brandIds && brandIds.length > 0) authReq.brandIds = brandIds;
   if (workflowSlug) authReq.workflowSlug = workflowSlug;
   if (featureSlug) authReq.featureSlug = featureSlug;
 

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
 import { apiKeyAuth, serviceAuth } from "../../src/middleware/auth.js";
+import type { AuthenticatedRequest } from "../../src/types.js";
 
 function createApp() {
   const app = express();
@@ -9,7 +10,8 @@ function createApp() {
   app.use(apiKeyAuth);
 
   app.post("/test-service-auth", serviceAuth, (req, res) => {
-    res.json({ ok: true });
+    const authReq = req as AuthenticatedRequest;
+    res.json({ ok: true, brandIds: authReq.brandIds });
   });
 
   return app;
@@ -80,5 +82,47 @@ describe("serviceAuth middleware", () => {
       .set("x-user-id", "00000000-0000-0000-0000-000000000002");
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("x-run-id header required");
+  });
+
+  it("parses single x-brand-id into brandIds array", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/test-service-auth")
+      .set("X-Api-Key", "test-api-key")
+      .set("x-org-id", "00000000-0000-0000-0000-000000000001")
+      .set("x-user-id", "00000000-0000-0000-0000-000000000002")
+      .set("x-run-id", "run-123")
+      .set("x-brand-id", "00000000-0000-0000-0000-000000000010");
+    expect(res.status).toBe(200);
+    expect(res.body.brandIds).toEqual(["00000000-0000-0000-0000-000000000010"]);
+  });
+
+  it("parses CSV x-brand-id into brandIds array", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/test-service-auth")
+      .set("X-Api-Key", "test-api-key")
+      .set("x-org-id", "00000000-0000-0000-0000-000000000001")
+      .set("x-user-id", "00000000-0000-0000-0000-000000000002")
+      .set("x-run-id", "run-123")
+      .set("x-brand-id", "00000000-0000-0000-0000-000000000010, 00000000-0000-0000-0000-000000000020, 00000000-0000-0000-0000-000000000030");
+    expect(res.status).toBe(200);
+    expect(res.body.brandIds).toEqual([
+      "00000000-0000-0000-0000-000000000010",
+      "00000000-0000-0000-0000-000000000020",
+      "00000000-0000-0000-0000-000000000030",
+    ]);
+  });
+
+  it("omits brandIds when x-brand-id header is absent", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/test-service-auth")
+      .set("X-Api-Key", "test-api-key")
+      .set("x-org-id", "00000000-0000-0000-0000-000000000001")
+      .set("x-user-id", "00000000-0000-0000-0000-000000000002")
+      .set("x-run-id", "run-123");
+    expect(res.status).toBe(200);
+    expect(res.body.brandIds).toBeUndefined();
   });
 });

@@ -78,7 +78,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
       callerMethod: "GET",
       callerPath: `/images/${r2Key}`,
       campaignId: authReq.campaignId,
-      brandId: authReq.brandId,
+      brandIds: authReq.brandIds,
       workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
     };

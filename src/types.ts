@@ -5,7 +5,7 @@ export interface AuthenticatedRequest extends Request {
   userId: string;
   runId: string;
   campaignId?: string;
-  brandId?: string;
+  brandIds?: string[];
   workflowSlug?: string;
   featureSlug?: string;
 }

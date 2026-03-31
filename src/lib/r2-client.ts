@@ -36,7 +36,8 @@ export async function uploadToR2(
     })
   );
 
-  return `https://${config.publicDomain}/${key}`;
+  const domain = config.publicDomain.replace(/^https?:\/\//, "");
+  return `https://${domain}/${key}`;
 }
 
 export interface R2Object {

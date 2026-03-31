@@ -16,6 +16,10 @@ const identityHeaders = {
   "x-org-id": z.string().uuid().openapi({ description: "Internal org UUID" }),
   "x-user-id": z.string().uuid().openapi({ description: "Internal user UUID" }),
   "x-run-id": z.string().openapi({ description: "Run ID from runs-service" }),
+  "x-brand-id": z.string().optional().openapi({
+    description: "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
+    example: "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002",
+  }),
 };
 
 // --- Health ---

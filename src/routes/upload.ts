@@ -74,7 +74,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       callerMethod: "POST",
       callerPath: "/upload",
       campaignId: authReq.campaignId,
-      brandId: authReq.brandId,
+      brandIds: authReq.brandIds,
       workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
     };

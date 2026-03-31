@@ -209,6 +209,16 @@
             "required": true,
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
+              "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
+            },
+            "required": false,
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "requestBody": {
@@ -300,6 +310,16 @@
             "required": true,
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
+              "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
+            },
+            "required": false,
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -369,6 +389,16 @@
             },
             "required": true,
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
+              "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
+            },
+            "required": false,
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -493,6 +523,16 @@
             },
             "required": true,
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
+              "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
+            },
+            "required": false,
+            "name": "x-brand-id",
             "in": "header"
           }
         ],

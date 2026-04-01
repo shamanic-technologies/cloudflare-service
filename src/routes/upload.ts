@@ -17,6 +17,11 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { orgId, userId, runId } = authReq;
 
+  const sourceUrl: string = req.body?.sourceUrl || "(missing)";
+  const logPrefix = `[cloudflare-service] [upload] [org=${orgId}]`;
+
+  console.log(`${logPrefix} Starting upload — sourceUrl=${sourceUrl}, runId=${runId}`);
+
   // Create run
   let childRun: { id: string };
   try {
@@ -25,6 +30,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       { orgId, userId, runId }
     );
   } catch (err) {
+    console.error(`${logPrefix} Failed to create run: ${err instanceof Error ? err.message : String(err)}`);
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
@@ -35,10 +41,9 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     // Validate body
     const parseResult = UploadRequestSchema.safeParse(req.body);
     if (!parseResult.success) {
-      res.status(400).json({
-        error: "Invalid request body",
-        reason: parseResult.error.issues.map((i) => i.message).join(", "),
-      });
+      const reason = parseResult.error.issues.map((i) => i.message).join(", ");
+      console.warn(`${logPrefix} Invalid request body: ${reason}`);
+      res.status(400).json({ error: "Invalid request body", reason });
       await updateRun(childRun.id, "failed", identity);
       return;
     }
@@ -46,8 +51,12 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     const { sourceUrl, folder, filename, contentType } = parseResult.data;
 
     // Download file from sourceUrl
+    console.log(`${logPrefix} Downloading from sourceUrl=${sourceUrl}`);
+    const fetchStart = Date.now();
     const sourceResponse = await fetch(sourceUrl);
+    const fetchMs = Date.now() - fetchStart;
     if (!sourceResponse.ok) {
+      console.error(`${logPrefix} Source URL failed — status=${sourceResponse.status}, url=${sourceUrl}, fetchMs=${fetchMs}`);
       res.status(502).json({
         error: "Upload failed",
         reason: `Source URL returned ${sourceResponse.status}`,
@@ -61,6 +70,8 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       contentType ||
       sourceResponse.headers.get("content-type") ||
       "application/octet-stream";
+
+    console.log(`${logPrefix} Downloaded ${fileBuffer.length} bytes in ${fetchMs}ms — contentType=${resolvedContentType}`);
 
     // Derive filename
     const resolvedFilename =
@@ -79,6 +90,8 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       featureSlug: authReq.featureSlug,
     };
 
+    console.log(`${logPrefix} Resolving R2 credentials from key-service`);
+    const keyStart = Date.now();
     const [accessKeyResult, secretKeyResult, accountIdResult, bucketNameResult, publicDomainResult] = await Promise.all([
       decryptKey("cloudflare-r2-access-key-id", orgId, userId, callerContext),
       decryptKey("cloudflare-r2-secret-access-key", orgId, userId, callerContext),
@@ -86,6 +99,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       decryptKey("cloudflare-r2-bucket-name", orgId, userId, callerContext),
       decryptKey("cloudflare-r2-public-domain", orgId, userId, callerContext),
     ]);
+    console.log(`${logPrefix} R2 credentials resolved in ${Date.now() - keyStart}ms`);
 
     const r2Config: R2Config = {
       accessKeyId: accessKeyResult.key,
@@ -96,12 +110,15 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     };
 
     // Upload to R2
+    console.log(`${logPrefix} Uploading to R2 — key=${r2Key}, size=${fileBuffer.length}`);
+    const r2Start = Date.now();
     const publicUrl = await uploadToR2(
       r2Config,
       r2Key,
       fileBuffer,
       resolvedContentType
     );
+    console.log(`${logPrefix} R2 upload completed in ${Date.now() - r2Start}ms — url=${publicUrl}`);
 
     // Store metadata
     const [record] = await db
@@ -121,6 +138,8 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
 
     await updateRun(childRun.id, "completed", identity);
 
+    console.log(`${logPrefix} Upload complete — id=${record.id}, url=${publicUrl}`);
+
     res.json({
       id: record.id,
       url: record.publicUrl,
@@ -128,10 +147,13 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       contentType: record.contentType,
     });
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : undefined;
+    console.error(`${logPrefix} Upload failed — sourceUrl=${sourceUrl}, error=${errMsg}`, errStack ? `\n${errStack}` : "");
     await updateRun(childRun.id, "failed", identity).catch(() => {});
     res.status(502).json({
       error: "Upload failed",
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errMsg,
     });
   }
 });

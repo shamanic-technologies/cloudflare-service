@@ -35,6 +35,7 @@ vi.mock("../../src/db/index.js", () => ({
 
 import uploadRouter from "../../src/routes/upload.js";
 import { createRun, updateRun } from "../../src/lib/runs-client.js";
+import { uploadToR2 } from "../../src/lib/r2-client.js";
 
 function createApp() {
   const app = express();
@@ -122,5 +123,51 @@ describe("POST /upload", () => {
     expect(res.body.url).toBe("https://storage.mcpfactory.org/videos/test.mp4");
     expect(res.body.contentType).toBe("video/mp4");
     expect(updateRun).toHaveBeenCalledWith("run-child-123", "completed", expect.any(Object));
+  });
+
+  it("returns 502 and logs when R2 upload fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+    vi.mocked(uploadToR2).mockRejectedValueOnce(new Error("R2 PutObject timeout"));
+
+    const errorSpy = vi.spyOn(console, "error");
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/image.png",
+      folder: "images",
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("Upload failed");
+    expect(res.body.reason).toBe("R2 PutObject timeout");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Upload failed"),
+      expect.stringContaining("R2 PutObject timeout")
+    );
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+
+    errorSpy.mockRestore();
+  });
+
+  it("returns 502 and logs when key-service fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+    const { decryptKey } = await import("../../src/lib/key-client.js");
+    vi.mocked(decryptKey).mockRejectedValueOnce(new Error("key-service unreachable"));
+
+    const errorSpy = vi.spyOn(console, "error");
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/image.png",
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.body.reason).toBe("key-service unreachable");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Upload failed"),
+      expect.stringContaining("key-service unreachable")
+    );
+
+    errorSpy.mockRestore();
   });
 });

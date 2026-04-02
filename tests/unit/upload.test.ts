@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import express from "express";
 import { apiKeyAuth } from "../../src/middleware/auth.js";
@@ -16,26 +16,31 @@ vi.mock("../../src/lib/r2-client.js", () => ({
   uploadToR2: vi.fn().mockResolvedValue("https://storage.mcpfactory.org/videos/test.mp4"),
 }));
 
-vi.mock("../../src/db/index.js", () => ({
-  db: {
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([
-          {
-            id: "00000000-0000-0000-0000-000000000099",
-            publicUrl: "https://storage.mcpfactory.org/videos/test.mp4",
-            sizeBytes: 1024,
-            contentType: "video/mp4",
-          },
-        ]),
+vi.mock("../../src/db/index.js", () => {
+  const record = {
+    id: "00000000-0000-0000-0000-000000000099",
+    publicUrl: "https://storage.mcpfactory.org/videos/test.mp4",
+    sizeBytes: 1024,
+    contentType: "video/mp4",
+  };
+  return {
+    db: {
+      insert: vi.fn().mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          onConflictDoUpdate: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([record]),
+          }),
+          returning: vi.fn().mockResolvedValue([record]),
+        }),
       }),
-    }),
-  },
-}));
+    },
+  };
+});
 
 import uploadRouter from "../../src/routes/upload.js";
 import { createRun, updateRun } from "../../src/lib/runs-client.js";
 import { uploadToR2 } from "../../src/lib/r2-client.js";
+import { db } from "../../src/db/index.js";
 
 function createApp() {
   const app = express();
@@ -147,6 +152,27 @@ describe("POST /upload", () => {
     expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
 
     errorSpy.mockRestore();
+  });
+
+  it("returns 200 on duplicate r2_key via upsert", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    // Verify the insert chain uses onConflictDoUpdate (upsert)
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/video.mp4",
+      folder: "videos",
+      filename: "test.mp4",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe("00000000-0000-0000-0000-000000000099");
+
+    // Verify the upsert path was called (onConflictDoUpdate)
+    const insertMock = vi.mocked(db.insert);
+    const valuesMock = insertMock.mock.results[0]?.value.values;
+    const onConflictMock = valuesMock.mock.results[0]?.value.onConflictDoUpdate;
+    expect(onConflictMock).toHaveBeenCalled();
   });
 
   it("returns 502 and logs when key-service fails", async () => {

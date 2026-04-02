@@ -6,6 +6,7 @@ import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun } from "../lib/runs-client.js";
 import { uploadToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
+import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest } from "../types.js";
@@ -120,7 +121,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     );
     console.log(`${logPrefix} R2 upload completed in ${Date.now() - r2Start}ms — url=${publicUrl}`);
 
-    // Store metadata
+    // Store metadata (upsert: concurrent uploads of the same r2Key return the existing record)
     const [record] = await db
       .insert(files)
       .values({
@@ -133,6 +134,10 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
         sourceUrl,
         contentType: resolvedContentType,
         sizeBytes: fileBuffer.length,
+      })
+      .onConflictDoUpdate({
+        target: files.r2Key,
+        set: { sourceUrl },
       })
       .returning();
 

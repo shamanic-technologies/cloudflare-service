@@ -149,6 +149,57 @@
           "orgId",
           "createdAt"
         ]
+      },
+      "TransferBrandResponse": {
+        "type": "object",
+        "properties": {
+          "updatedTables": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tableName": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "tableName",
+                "count"
+              ]
+            }
+          }
+        },
+        "required": [
+          "updatedTables"
+        ]
+      },
+      "TransferBrandRequest": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Brand UUID to transfer"
+          },
+          "sourceOrgId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Current org UUID"
+          },
+          "targetOrgId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Destination org UUID"
+          }
+        },
+        "required": [
+          "brandId",
+          "sourceOrgId",
+          "targetOrgId"
+        ]
       }
     },
     "parameters": {}
@@ -560,6 +611,48 @@
           },
           "502": {
             "description": "Image processing failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/transfer-brand": {
+      "post": {
+        "summary": "Transfer brand ownership between orgs",
+        "description": "Re-assigns all solo-brand file rows from sourceOrgId to targetOrgId. Skips co-branding rows.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferBrandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transfer completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferBrandResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {

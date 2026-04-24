@@ -159,6 +159,46 @@ registry.registerPath({
   },
 });
 
+// --- Transfer Brand (internal) ---
+
+export const TransferBrandRequestSchema = z.object({
+  brandId: z.string().uuid().openapi({ description: "Brand UUID to transfer" }),
+  sourceOrgId: z.string().uuid().openapi({ description: "Current org UUID" }),
+  targetOrgId: z.string().uuid().openapi({ description: "Destination org UUID" }),
+}).openapi("TransferBrandRequest");
+
+export const TransferBrandResponseSchema = z.object({
+  updatedTables: z.array(
+    z.object({
+      tableName: z.string(),
+      count: z.number().int(),
+    })
+  ),
+}).openapi("TransferBrandResponse");
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/transfer-brand",
+  summary: "Transfer brand ownership between orgs",
+  description: "Re-assigns all solo-brand file rows from sourceOrgId to targetOrgId. Skips co-branding rows.",
+  security: [{ [ApiKeyHeader.name]: [] }],
+  request: {
+    body: {
+      content: { "application/json": { schema: TransferBrandRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: "Transfer completed",
+      content: { "application/json": { schema: TransferBrandResponseSchema } },
+    },
+    400: {
+      description: "Invalid request",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
 // --- Delete File ---
 
 registry.registerPath({

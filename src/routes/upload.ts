@@ -134,6 +134,10 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
         sourceUrl,
         contentType: resolvedContentType,
         sizeBytes: fileBuffer.length,
+        brandIds: authReq.brandIds || null,
+        campaignId: authReq.campaignId || null,
+        workflowSlug: authReq.workflowSlug || null,
+        featureSlug: authReq.featureSlug || null,
       })
       .onConflictDoUpdate({
         target: files.r2Key,

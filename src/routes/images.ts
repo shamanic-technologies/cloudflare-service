@@ -5,6 +5,7 @@ import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun } from "../lib/runs-client.js";
 import { getFromR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
+import { traceEvent } from "../lib/trace-event.js";
 import type { AuthenticatedRequest } from "../types.js";
 import type { Response } from "express";
 
@@ -58,6 +59,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
 
   try {
     const r2Key = req.params[0];
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:start", detail: `key=${r2Key || "(missing)"}` }, req.headers);
     if (!r2Key) {
       res.status(400).json({ error: "Missing image key" });
       await updateRun(childRun.id, "failed", identity);
@@ -102,6 +104,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
     // Fetch from R2
     const object = await getFromR2(r2Config, r2Key);
     if (!object) {
+      traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:not-found", level: "warn", detail: `key=${r2Key}` }, req.headers);
       res.status(404).json({ error: "Image not found" });
       await updateRun(childRun.id, "failed", identity);
       return;
@@ -111,6 +114,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
 
     if (!needsTransform) {
       // Serve original
+      traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:complete", data: { r2Key, transformed: false } }, req.headers);
       res.setHeader("content-type", object.contentType);
       res.setHeader("cache-control", "public, max-age=31536000, immutable");
       res.send(object.body);
@@ -148,11 +152,13 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
 
     const transformed = await pipeline.toBuffer();
 
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:complete", data: { r2Key, transformed: true, format: outputFormat, bytes: transformed.length } }, req.headers);
     res.setHeader("content-type", resolveContentType(outputFormat));
     res.setHeader("cache-control", "public, max-age=31536000, immutable");
     res.send(transformed);
     await updateRun(childRun.id, "completed", identity);
   } catch (err) {
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:error", level: "error", detail: err instanceof Error ? err.message : String(err) }, req.headers);
     await updateRun(childRun.id, "failed", identity).catch(() => {});
     res.status(502).json({
       error: "Image processing failed",

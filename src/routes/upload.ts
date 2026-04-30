@@ -6,6 +6,7 @@ import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun } from "../lib/runs-client.js";
 import { uploadToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
+import { traceEvent } from "../lib/trace-event.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
@@ -51,6 +52,8 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
 
     const { sourceUrl, folder, filename, contentType } = parseResult.data;
 
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:start", detail: `sourceUrl=${sourceUrl}` }, req.headers);
+
     // Download file from sourceUrl
     console.log(`${logPrefix} Downloading from sourceUrl=${sourceUrl}`);
     const fetchStart = Date.now();
@@ -73,6 +76,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       "application/octet-stream";
 
     console.log(`${logPrefix} Downloaded ${fileBuffer.length} bytes in ${fetchMs}ms — contentType=${resolvedContentType}`);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:downloaded", data: { bytes: fileBuffer.length, fetchMs } }, req.headers);
 
     // Derive filename
     const resolvedFilename =
@@ -120,6 +124,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       resolvedContentType
     );
     console.log(`${logPrefix} R2 upload completed in ${Date.now() - r2Start}ms — url=${publicUrl}`);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:r2-complete", data: { r2Key, uploadMs: Date.now() - r2Start } }, req.headers);
 
     // Store metadata (upsert: concurrent uploads of the same r2Key return the existing record)
     const [record] = await db
@@ -144,6 +149,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     await updateRun(childRun.id, "completed", identity);
 
     console.log(`${logPrefix} Upload complete — id=${record.id}, url=${publicUrl}`);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:complete", data: { fileId: record.id, sizeBytes: fileBuffer.length } }, req.headers);
 
     res.json({
       id: record.id,
@@ -155,6 +161,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     const errMsg = err instanceof Error ? err.message : String(err);
     const errStack = err instanceof Error ? err.stack : undefined;
     console.error(`${logPrefix} Upload failed — sourceUrl=${sourceUrl}, error=${errMsg}`, errStack ? `\n${errStack}` : "");
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:error", level: "error", detail: errMsg }, req.headers);
     await updateRun(childRun.id, "failed", identity).catch(() => {});
     res.status(502).json({
       error: "Upload failed",

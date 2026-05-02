@@ -5,6 +5,7 @@ import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun } from "../lib/runs-client.js";
 import { deleteFromR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
+import { traceEvent } from "../lib/trace-event.js";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest } from "../types.js";
@@ -29,16 +30,20 @@ router.get("/files/:id", serviceAuth, async (req, res: Response) => {
   }
 
   try {
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-file:start", detail: `fileId=${req.params.id}` }, req.headers);
+
     const record = await db.query.files.findFirst({
       where: eq(files.id, req.params.id as string),
     });
 
     if (!record) {
+      traceEvent(childRun.id, { service: "cloudflare-service", event: "get-file:not-found", level: "warn", detail: `fileId=${req.params.id}` }, req.headers);
       await updateRun(childRun.id, "failed", { orgId, userId });
       res.status(404).json({ error: "File not found" });
       return;
     }
 
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-file:complete", data: { fileId: record.id } }, req.headers);
     await updateRun(childRun.id, "completed", { orgId, userId });
 
     res.json({
@@ -74,11 +79,14 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
   }
 
   try {
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "delete-file:start", detail: `fileId=${req.params.id}` }, req.headers);
+
     const record = await db.query.files.findFirst({
       where: eq(files.id, req.params.id as string),
     });
 
     if (!record) {
+      traceEvent(childRun.id, { service: "cloudflare-service", event: "delete-file:not-found", level: "warn", detail: `fileId=${req.params.id}` }, req.headers);
       await updateRun(childRun.id, "failed", { orgId, userId });
       res.status(404).json({ error: "File not found" });
       return;
@@ -116,9 +124,11 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
     // Delete metadata
     await db.delete(files).where(eq(files.id, req.params.id as string));
 
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "delete-file:complete", data: { fileId: req.params.id } }, req.headers);
     await updateRun(childRun.id, "completed", { orgId, userId });
     res.status(204).send();
   } catch (err) {
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "delete-file:error", level: "error", detail: err instanceof Error ? err.message : String(err) }, req.headers);
     await updateRun(childRun.id, "failed", { orgId, userId }).catch(() => {});
     res.status(502).json({
       error: "Delete failed",

@@ -2,6 +2,7 @@
   "name": "cloudflare-storage-service",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.14.0",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc && pnpm generate:openapi",

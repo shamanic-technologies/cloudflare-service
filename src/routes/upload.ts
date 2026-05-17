@@ -3,10 +3,12 @@ import { randomUUID } from "crypto";
 import { serviceAuth } from "../middleware/auth.js";
 import { UploadRequestSchema } from "../schemas.js";
 import { decryptKey } from "../lib/key-client.js";
-import { createRun, updateRun } from "../lib/runs-client.js";
+import { createRun, updateRun, declareActualCost } from "../lib/runs-client.js";
+import { authorizeCustomerBalance } from "../lib/billing-client.js";
 import { uploadToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { extractForwardHeaders } from "../lib/forward-headers.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
@@ -14,6 +16,7 @@ import type { AuthenticatedRequest } from "../types.js";
 import type { Response } from "express";
 
 const router = Router();
+const UPLOAD_COST_NAME = "cloudflare-r2-class-a-operation";
 
 router.post("/upload", serviceAuth, async (req, res: Response) => {
   const authReq = req as AuthenticatedRequest;
@@ -38,6 +41,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
   }
 
   const identity = { orgId, userId };
+  const forwardHeaders = extractForwardHeaders(req.headers);
 
   try {
     // Validate body
@@ -106,6 +110,52 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
     ]);
     console.log(`${logPrefix} R2 credentials resolved in ${Date.now() - keyStart}ms`);
 
+    const keySources = [
+      accessKeyResult.keySource,
+      secretKeyResult.keySource,
+      accountIdResult.keySource,
+      bucketNameResult.keySource,
+      publicDomainResult.keySource,
+    ];
+    const uniqueSources = new Set(keySources);
+    if (uniqueSources.size !== 1) {
+      console.error(`${logPrefix} keySource mismatch across R2 credentials: ${keySources.join(",")}`);
+      res.status(500).json({
+        error: "Inconsistent keySource across R2 credentials",
+        reason: keySources.join(","),
+      });
+      await updateRun(childRun.id, "failed", identity);
+      return;
+    }
+    const costSource = keySources[0];
+
+    // Platform branch: authorize via billing-service. Org branch: skip.
+    if (costSource === "platform") {
+      console.log(`${logPrefix} Authorizing platform cost ${UPLOAD_COST_NAME} qty=1`);
+      const authz = await authorizeCustomerBalance({
+        orgId,
+        userId,
+        runId: childRun.id,
+        items: [{ costName: UPLOAD_COST_NAME, quantity: 1 }],
+        forwardHeaders,
+      });
+
+      if (!authz.sufficient) {
+        console.warn(
+          `${logPrefix} Insufficient balance — balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
+        );
+        res.status(402).json({
+          error: "Insufficient credit balance",
+          reason: `balance=${authz.balance_cents} required=${authz.required_cents}`,
+        });
+        await updateRun(childRun.id, "failed", identity);
+        return;
+      }
+      console.log(
+        `${logPrefix} Authorize sufficient=true balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
+      );
+    }
+
     const r2Config: R2Config = {
       accessKeyId: accessKeyResult.key,
       secretAccessKey: secretKeyResult.key,
@@ -145,6 +195,14 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
         set: { sourceUrl },
       })
       .returning();
+
+    // Declare cost to runs-service (both platform and org). Quantity = 1 PUT.
+    await declareActualCost(
+      childRun.id,
+      { costName: UPLOAD_COST_NAME, costSource, quantity: 1 },
+      identity,
+      forwardHeaders
+    );
 
     await updateRun(childRun.id, "completed", identity);
 

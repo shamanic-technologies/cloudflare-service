@@ -76,4 +76,76 @@ describe("runs-client", () => {
     const headers = (callArgs[1] as RequestInit).headers as Record<string, string>;
     expect(headers["X-Api-Key"]).toBe("test-key");
   });
+
+  it("declareActualCost POSTs /v1/runs/:id/costs w/ status=actual", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ costs: [{ id: "cost-1" }] }),
+    }) as never;
+
+    const { declareActualCost } = await import("../../src/lib/runs-client.js");
+    await declareActualCost(
+      "run-abc",
+      { costName: "cloudflare-r2-class-a-operation", costSource: "platform", quantity: 1 },
+      { orgId: "org-1", userId: "user-1" }
+    );
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(call[0]).toBe("https://runs.example.com/v1/runs/run-abc/costs");
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Api-Key"]).toBe("test-key");
+    expect(headers["x-org-id"]).toBe("org-1");
+    expect(JSON.parse(init.body as string)).toEqual({
+      items: [
+        {
+          costName: "cloudflare-r2-class-a-operation",
+          costSource: "platform",
+          quantity: 1,
+          status: "actual",
+        },
+      ],
+    });
+  });
+
+  it("declareActualCost forwards x-campaign-id, x-brand-id, x-workflow-* when supplied", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ costs: [] }),
+    }) as never;
+
+    const { declareActualCost } = await import("../../src/lib/runs-client.js");
+    await declareActualCost(
+      "run-abc",
+      { costName: "x", costSource: "org", quantity: 1 },
+      { orgId: "org-1", userId: "user-1" },
+      { "x-campaign-id": "c-1", "x-brand-id": "b-1", "x-workflow-slug": "wf-1" }
+    );
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    const headers = (call[1] as RequestInit).headers as Record<string, string>;
+    expect(headers["x-campaign-id"]).toBe("c-1");
+    expect(headers["x-brand-id"]).toBe("b-1");
+    expect(headers["x-workflow-slug"]).toBe("wf-1");
+  });
+
+  it("declareActualCost throws fail-loud on non-2xx", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      text: () => Promise.resolve('{"error":"Unknown cost name"}'),
+    }) as never;
+
+    const { declareActualCost } = await import("../../src/lib/runs-client.js");
+    await expect(
+      declareActualCost(
+        "run-abc",
+        { costName: "bogus", costSource: "platform", quantity: 1 },
+        { orgId: "org-1", userId: "user-1" }
+      )
+    ).rejects.toThrow(/declareActualCost failed.*422/);
+  });
 });

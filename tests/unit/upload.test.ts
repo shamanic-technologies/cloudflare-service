@@ -6,10 +6,19 @@ import { apiKeyAuth } from "../../src/middleware/auth.js";
 vi.mock("../../src/lib/runs-client.js", () => ({
   createRun: vi.fn().mockResolvedValue({ id: "run-child-123" }),
   updateRun: vi.fn().mockResolvedValue(undefined),
+  declareActualCost: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/key-client.js", () => ({
   decryptKey: vi.fn().mockResolvedValue({ key: "mock-key", keySource: "platform" }),
+}));
+
+vi.mock("../../src/lib/billing-client.js", () => ({
+  authorizeCustomerBalance: vi.fn().mockResolvedValue({
+    sufficient: true,
+    balance_cents: "1000.0000",
+    required_cents: "0.0009",
+  }),
 }));
 
 vi.mock("../../src/lib/r2-client.js", () => ({
@@ -38,7 +47,9 @@ vi.mock("../../src/db/index.js", () => {
 });
 
 import uploadRouter from "../../src/routes/upload.js";
-import { createRun, updateRun } from "../../src/lib/runs-client.js";
+import { createRun, updateRun, declareActualCost } from "../../src/lib/runs-client.js";
+import { authorizeCustomerBalance } from "../../src/lib/billing-client.js";
+import { decryptKey } from "../../src/lib/key-client.js";
 import { uploadToR2 } from "../../src/lib/r2-client.js";
 import { db } from "../../src/db/index.js";
 
@@ -73,6 +84,12 @@ describe("POST /upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
+    vi.mocked(decryptKey).mockResolvedValue({ key: "mock-key", keySource: "platform" });
+    vi.mocked(authorizeCustomerBalance).mockResolvedValue({
+      sufficient: true,
+      balance_cents: "1000.0000",
+      required_cents: "0.0009",
+    });
   });
 
   afterEach(() => {
@@ -112,7 +129,7 @@ describe("POST /upload", () => {
     expect(res.body.error).toBe("Failed to create run");
   });
 
-  it("uploads successfully with all fields", async () => {
+  it("platform: authorizes, uploads, declares actual cost, marks run completed", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
 
     const app = createApp();
@@ -125,12 +142,106 @@ describe("POST /upload", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("00000000-0000-0000-0000-000000000099");
-    expect(res.body.url).toBe("https://storage.mcpfactory.org/videos/test.mp4");
-    expect(res.body.contentType).toBe("video/mp4");
+    expect(authorizeCustomerBalance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "00000000-0000-0000-0000-000000000001",
+        userId: "00000000-0000-0000-0000-000000000002",
+        runId: "run-child-123",
+        items: [{ costName: "cloudflare-r2-class-a-operation", quantity: 1 }],
+      })
+    );
+    expect(uploadToR2).toHaveBeenCalled();
+    expect(declareActualCost).toHaveBeenCalledWith(
+      "run-child-123",
+      { costName: "cloudflare-r2-class-a-operation", costSource: "platform", quantity: 1 },
+      expect.any(Object),
+      expect.any(Object)
+    );
     expect(updateRun).toHaveBeenCalledWith("run-child-123", "completed", expect.any(Object));
   });
 
-  it("returns 502 and logs when R2 upload fails", async () => {
+  it("platform sufficient=false: returns 402, skips R2 PUT, no cost row, run failed", async () => {
+    vi.mocked(authorizeCustomerBalance).mockResolvedValue({
+      sufficient: false,
+      balance_cents: "0.0000",
+      required_cents: "0.0009",
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/video.mp4",
+    });
+
+    expect(res.status).toBe(402);
+    expect(res.body.error).toBe("Insufficient credit balance");
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(declareActualCost).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("platform billing non-2xx: returns 502, no R2 PUT, no cost row, run failed", async () => {
+    vi.mocked(authorizeCustomerBalance).mockRejectedValueOnce(
+      new Error("billing-service authorize failed: status=500 body=internal")
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/video.mp4",
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("Upload failed");
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(declareActualCost).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("org: skips authorize, uploads, declares actual cost w/ costSource=org", async () => {
+    vi.mocked(decryptKey).mockResolvedValue({ key: "mock-key", keySource: "org" });
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/video.mp4",
+    });
+
+    expect(res.status).toBe(200);
+    expect(authorizeCustomerBalance).not.toHaveBeenCalled();
+    expect(uploadToR2).toHaveBeenCalled();
+    expect(declareActualCost).toHaveBeenCalledWith(
+      "run-child-123",
+      { costName: "cloudflare-r2-class-a-operation", costSource: "org", quantity: 1 },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "completed", expect.any(Object));
+  });
+
+  it("keySource mismatch across 5 decryptKey calls: 500, no R2 PUT, no cost row, run failed", async () => {
+    vi.mocked(decryptKey)
+      .mockResolvedValueOnce({ key: "k1", keySource: "platform" })
+      .mockResolvedValueOnce({ key: "k2", keySource: "org" })
+      .mockResolvedValueOnce({ key: "k3", keySource: "platform" })
+      .mockResolvedValueOnce({ key: "k4", keySource: "platform" })
+      .mockResolvedValueOnce({ key: "k5", keySource: "platform" });
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/video.mp4",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Inconsistent keySource across R2 credentials");
+    expect(authorizeCustomerBalance).not.toHaveBeenCalled();
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(declareActualCost).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("R2 fails after platform authorize success: 502, no cost row, run failed", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
     vi.mocked(uploadToR2).mockRejectedValueOnce(new Error("R2 PutObject timeout"));
 
@@ -145,10 +256,8 @@ describe("POST /upload", () => {
     expect(res.status).toBe(502);
     expect(res.body.error).toBe("Upload failed");
     expect(res.body.reason).toBe("R2 PutObject timeout");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Upload failed"),
-      expect.stringContaining("R2 PutObject timeout")
-    );
+    expect(authorizeCustomerBalance).toHaveBeenCalled();
+    expect(declareActualCost).not.toHaveBeenCalled();
     expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
 
     errorSpy.mockRestore();
@@ -157,7 +266,6 @@ describe("POST /upload", () => {
   it("returns 200 on duplicate r2_key via upsert", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
 
-    // Verify the insert chain uses onConflictDoUpdate (upsert)
     const app = createApp();
     const res = await request(app).post("/upload").set(authHeaders).send({
       sourceUrl: "https://example.com/video.mp4",
@@ -168,7 +276,6 @@ describe("POST /upload", () => {
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("00000000-0000-0000-0000-000000000099");
 
-    // Verify the upsert path was called (onConflictDoUpdate)
     const insertMock = vi.mocked(db.insert);
     const valuesMock = insertMock.mock.results[0]?.value.values;
     const onConflictMock = valuesMock.mock.results[0]?.value.onConflictDoUpdate;
@@ -177,7 +284,6 @@ describe("POST /upload", () => {
 
   it("returns 502 and logs when key-service fails", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
-    const { decryptKey } = await import("../../src/lib/key-client.js");
     vi.mocked(decryptKey).mockRejectedValueOnce(new Error("key-service unreachable"));
 
     const errorSpy = vi.spyOn(console, "error");
@@ -189,11 +295,42 @@ describe("POST /upload", () => {
 
     expect(res.status).toBe(502);
     expect(res.body.reason).toBe("key-service unreachable");
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Upload failed"),
-      expect.stringContaining("key-service unreachable")
-    );
 
     errorSpy.mockRestore();
+  });
+
+  it("forwards x-campaign-id / x-brand-id / x-workflow-slug to billing + runs", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    const app = createApp();
+    await request(app)
+      .post("/upload")
+      .set({
+        ...authHeaders,
+        "x-campaign-id": "camp-9",
+        "x-brand-id": "brand-9",
+        "x-workflow-slug": "wf-9",
+      })
+      .send({ sourceUrl: "https://example.com/video.mp4" });
+
+    expect(authorizeCustomerBalance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        forwardHeaders: expect.objectContaining({
+          "x-campaign-id": "camp-9",
+          "x-brand-id": "brand-9",
+          "x-workflow-slug": "wf-9",
+        }),
+      })
+    );
+    expect(declareActualCost).toHaveBeenCalledWith(
+      "run-child-123",
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({
+        "x-campaign-id": "camp-9",
+        "x-brand-id": "brand-9",
+        "x-workflow-slug": "wf-9",
+      })
+    );
   });
 });

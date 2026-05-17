@@ -61,3 +61,44 @@ export async function updateRun(
     body: JSON.stringify({ status }),
   });
 }
+
+export interface CostItem {
+  costName: string;
+  costSource: "platform" | "org";
+  quantity: number;
+}
+
+export async function declareActualCost(
+  runId: string,
+  item: CostItem,
+  identity: RunIdentity,
+  forwardHeaders?: Record<string, string>
+): Promise<void> {
+  const response = await fetch(`${RUNS_SERVICE_URL}/v1/runs/${runId}/costs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": RUNS_SERVICE_API_KEY,
+      "x-org-id": identity.orgId,
+      "x-user-id": identity.userId,
+      ...(forwardHeaders ?? {}),
+    },
+    body: JSON.stringify({
+      items: [
+        {
+          costName: item.costName,
+          costSource: item.costSource,
+          quantity: item.quantity,
+          status: "actual",
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `runs-service declareActualCost failed: status=${response.status} body=${body}`
+    );
+  }
+}

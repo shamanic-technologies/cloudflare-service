@@ -2,10 +2,12 @@ import { Router } from "express";
 import sharp from "sharp";
 import { serviceAuth } from "../middleware/auth.js";
 import { decryptKey } from "../lib/key-client.js";
-import { createRun, updateRun } from "../lib/runs-client.js";
+import { createRun, updateRun, declareActualCost } from "../lib/runs-client.js";
+import { authorizeCustomerBalance } from "../lib/billing-client.js";
 import { getFromR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { extractForwardHeaders } from "../lib/forward-headers.js";
 import type { AuthenticatedRequest } from "../types.js";
 import type { Response } from "express";
 
@@ -14,6 +16,7 @@ const router = Router();
 const ALLOWED_FIT = new Set(["cover", "contain", "fill", "inside", "outside"]);
 const ALLOWED_FORMAT = new Set(["webp", "avif", "png", "jpeg"]);
 const MAX_DIMENSION = 4096;
+const IMAGE_COST_NAME = "cloudflare-r2-class-b-operation";
 
 export function parsePositiveInt(value: string | undefined, max: number): number | undefined {
   if (!value) return undefined;
@@ -43,6 +46,7 @@ export function resolveContentType(format: string): string {
 router.get("/images/*", serviceAuth, async (req, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { orgId, userId, runId } = authReq;
+  const logPrefix = `[cloudflare-service] [images] [org=${orgId}]`;
 
   let childRun: { id: string };
   try {
@@ -56,6 +60,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
   }
 
   const identity = { orgId, userId };
+  const forwardHeaders = extractForwardHeaders(req.headers);
 
   try {
     const r2Key = req.params[0];
@@ -93,6 +98,46 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
       decryptKey("cloudflare-r2-public-domain", orgId, userId, callerContext),
     ]);
 
+    const keySources = [
+      accessKeyResult.keySource,
+      secretKeyResult.keySource,
+      accountIdResult.keySource,
+      bucketNameResult.keySource,
+      publicDomainResult.keySource,
+    ];
+    const uniqueSources = new Set(keySources);
+    if (uniqueSources.size !== 1) {
+      console.error(`${logPrefix} keySource mismatch across R2 credentials: ${keySources.join(",")}`);
+      res.status(500).json({
+        error: "Inconsistent keySource across R2 credentials",
+        reason: keySources.join(","),
+      });
+      await updateRun(childRun.id, "failed", identity);
+      return;
+    }
+    const costSource = keySources[0];
+
+    if (costSource === "platform") {
+      const authz = await authorizeCustomerBalance({
+        orgId,
+        userId,
+        runId: childRun.id,
+        items: [{ costName: IMAGE_COST_NAME, quantity: 1 }],
+        forwardHeaders,
+      });
+      if (!authz.sufficient) {
+        console.warn(
+          `${logPrefix} Insufficient balance — balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
+        );
+        res.status(402).json({
+          error: "Insufficient credit balance",
+          reason: `balance=${authz.balance_cents} required=${authz.required_cents}`,
+        });
+        await updateRun(childRun.id, "failed", identity);
+        return;
+      }
+    }
+
     const r2Config: R2Config = {
       accessKeyId: accessKeyResult.key,
       secretAccessKey: secretKeyResult.key,
@@ -118,6 +163,12 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
       res.setHeader("content-type", object.contentType);
       res.setHeader("cache-control", "public, max-age=31536000, immutable");
       res.send(object.body);
+      await declareActualCost(
+        childRun.id,
+        { costName: IMAGE_COST_NAME, costSource, quantity: 1 },
+        identity,
+        forwardHeaders
+      );
       await updateRun(childRun.id, "completed", identity);
       return;
     }
@@ -156,6 +207,12 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
     res.setHeader("content-type", resolveContentType(outputFormat));
     res.setHeader("cache-control", "public, max-age=31536000, immutable");
     res.send(transformed);
+    await declareActualCost(
+      childRun.id,
+      { costName: IMAGE_COST_NAME, costSource, quantity: 1 },
+      identity,
+      forwardHeaders
+    );
     await updateRun(childRun.id, "completed", identity);
   } catch (err) {
     traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:error", level: "error", detail: err instanceof Error ? err.message : String(err) }, req.headers);

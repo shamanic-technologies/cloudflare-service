@@ -104,6 +104,30 @@
           "sourceUrl"
         ]
       },
+      "UploadBase64Request": {
+        "type": "object",
+        "properties": {
+          "contentBase64": {
+            "type": "string",
+            "description": "Base64-encoded file content. Data URL prefixes are accepted."
+          },
+          "folder": {
+            "type": "string",
+            "description": "R2 key prefix/folder"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Desired filename"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "MIME type"
+          }
+        },
+        "required": [
+          "contentBase64"
+        ]
+      },
       "FileResponse": {
         "type": "object",
         "properties": {
@@ -226,6 +250,99 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upload failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/upload/base64": {
+      "post": {
+        "summary": "Upload base64 content to R2",
+        "description": "Decodes base64 file content from the request body and uploads it to Cloudflare R2",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID"
+            },
+            "required": true,
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID"
+            },
+            "required": true,
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Run ID from runs-service"
+            },
+            "required": true,
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
+              "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
+            },
+            "required": false,
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadBase64Request"
               }
             }
           }

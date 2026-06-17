@@ -50,6 +50,15 @@ export const UploadRequestSchema = z.object({
   contentType: z.string().optional().openapi({ description: "MIME type" }),
 }).openapi("UploadRequest");
 
+export const UploadBase64RequestSchema = z.object({
+  contentBase64: z.string().openapi({
+    description: "Base64-encoded file content. Data URL prefixes are accepted.",
+  }),
+  folder: z.string().optional().openapi({ description: "R2 key prefix/folder" }),
+  filename: z.string().optional().openapi({ description: "Desired filename" }),
+  contentType: z.string().optional().openapi({ description: "MIME type" }),
+}).openapi("UploadBase64Request");
+
 export const UploadResponseSchema = z.object({
   id: z.string().uuid().openapi({ description: "File record UUID" }),
   url: z.string().url().openapi({ description: "Permanent public URL" }),
@@ -72,6 +81,34 @@ registry.registerPath({
     headers: z.object(identityHeaders),
     body: {
       content: { "application/json": { schema: UploadRequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: "File uploaded successfully",
+      content: { "application/json": { schema: UploadResponseSchema } },
+    },
+    400: {
+      description: "Invalid request",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    502: {
+      description: "Upload failed",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/upload/base64",
+  summary: "Upload base64 content to R2",
+  description: "Decodes base64 file content from the request body and uploads it to Cloudflare R2",
+  security: [{ [ApiKeyHeader.name]: [] }],
+  request: {
+    headers: z.object(identityHeaders),
+    body: {
+      content: { "application/json": { schema: UploadBase64RequestSchema } },
     },
   },
   responses: {

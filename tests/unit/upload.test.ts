@@ -334,3 +334,93 @@ describe("POST /upload", () => {
     );
   });
 });
+
+describe("POST /upload/base64", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
+    vi.mocked(decryptKey).mockResolvedValue({ key: "mock-key", keySource: "platform" });
+    vi.mocked(authorizeCustomerBalance).mockResolvedValue({
+      sufficient: true,
+      balance_cents: "1000.0000",
+      required_cents: "0.0009",
+    });
+    globalThis.fetch = vi.fn() as never;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns 400 for invalid base64 without uploading", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/upload/base64")
+      .set(authHeaders)
+      .send({ contentBase64: "not base64!" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request body");
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("platform: decodes base64, uploads to R2, declares actual cost, and marks run completed", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/upload/base64")
+      .set(authHeaders)
+      .send({
+        contentBase64: Buffer.from("avatar-bytes").toString("base64"),
+        folder: "persona-avatars/brand-1/persona-1",
+        filename: "v1.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(200);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(authorizeCustomerBalance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "00000000-0000-0000-0000-000000000001",
+        userId: "00000000-0000-0000-0000-000000000002",
+        runId: "run-child-123",
+        items: [{ costName: "cloudflare-r2-class-a-operation", quantity: 1 }],
+      })
+    );
+    expect(uploadToR2).toHaveBeenCalledWith(
+      expect.objectContaining({ bucketName: "mock-key" }),
+      "persona-avatars/brand-1/persona-1/v1.png",
+      Buffer.from("avatar-bytes"),
+      "image/png"
+    );
+    expect(declareActualCost).toHaveBeenCalledWith(
+      "run-child-123",
+      { costName: "cloudflare-r2-class-a-operation", costSource: "platform", quantity: 1 },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "completed", expect.any(Object));
+  });
+
+  it("accepts data URLs and infers content type from the prefix", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/upload/base64")
+      .set(authHeaders)
+      .send({
+        contentBase64: `data:image/png;base64,${Buffer.from("png-bytes").toString("base64")}`,
+        folder: "avatars",
+        filename: "persona.png",
+      });
+
+    expect(res.status).toBe(200);
+    expect(uploadToR2).toHaveBeenCalledWith(
+      expect.any(Object),
+      "avatars/persona.png",
+      Buffer.from("png-bytes"),
+      "image/png"
+    );
+  });
+});

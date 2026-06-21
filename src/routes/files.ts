@@ -6,6 +6,7 @@ import { createRun, updateRun } from "../lib/runs-client.js";
 import { deleteFromR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { extractForwardHeaders } from "../lib/forward-headers.js";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest } from "../types.js";
@@ -18,11 +19,14 @@ router.get("/files/:id", serviceAuth, async (req, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { orgId, userId, runId } = authReq;
 
+  const forwardHeaders = extractForwardHeaders(req.headers);
+
   let childRun: { id: string };
   try {
     childRun = await createRun(
       { serviceName: "cloudflare-storage", taskName: "get-file" },
-      { orgId, userId, runId }
+      { orgId, userId, runId },
+      forwardHeaders
     );
   } catch (err) {
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
@@ -67,11 +71,14 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { orgId, userId, runId } = authReq;
 
+  const forwardHeaders = extractForwardHeaders(req.headers);
+
   let childRun: { id: string };
   try {
     childRun = await createRun(
       { serviceName: "cloudflare-storage", taskName: "delete-file" },
-      { orgId, userId, runId }
+      { orgId, userId, runId },
+      forwardHeaders
     );
   } catch (err) {
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
@@ -100,6 +107,7 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
       brandIds: authReq.brandIds,
       workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
+      audienceId: authReq.audienceId,
     };
 
     const [accessKeyResult, secretKeyResult, accountIdResult, bucketNameResult, publicDomainResult] = await Promise.all([

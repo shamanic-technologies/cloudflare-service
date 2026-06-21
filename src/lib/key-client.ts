@@ -8,6 +8,7 @@ interface CallerContext {
   brandIds?: string[];
   workflowSlug?: string;
   featureSlug?: string;
+  audienceId?: string;
 }
 
 export async function decryptKey(
@@ -28,6 +29,7 @@ export async function decryptKey(
       ...(caller.brandIds?.length ? { "x-brand-id": caller.brandIds.join(",") } : {}),
       ...(caller.workflowSlug ? { "x-workflow-slug": caller.workflowSlug } : {}),
       ...(caller.featureSlug ? { "x-feature-slug": caller.featureSlug } : {}),
+      ...(caller.audienceId ? { "x-audience-id": caller.audienceId } : {}),
     },
   });
 

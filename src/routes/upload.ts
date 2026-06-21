@@ -45,21 +45,22 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
 
   console.log(`${logPrefix} Starting upload — sourceUrl=${sourceUrl}, runId=${runId}`);
 
+  const identity = { orgId, userId };
+  const forwardHeaders = extractForwardHeaders(req.headers);
+
   // Create run
   let childRun: { id: string };
   try {
     childRun = await createRun(
       { serviceName: "cloudflare-storage", taskName: "upload" },
-      { orgId, userId, runId }
+      { orgId, userId, runId },
+      forwardHeaders
     );
   } catch (err) {
     console.error(`${logPrefix} Failed to create run: ${err instanceof Error ? err.message : String(err)}`);
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
-
-  const identity = { orgId, userId };
-  const forwardHeaders = extractForwardHeaders(req.headers);
 
   try {
     // Validate body
@@ -115,6 +116,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       brandIds: authReq.brandIds,
       workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
+      audienceId: authReq.audienceId,
     };
 
     console.log(`${logPrefix} Resolving R2 credentials from key-service`);
@@ -253,20 +255,21 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
   const logPrefix = `[cloudflare-service] [upload-base64] [org=${orgId}]`;
   console.log(`${logPrefix} Starting upload, runId=${runId}`);
 
+  const identity = { orgId, userId };
+  const forwardHeaders = extractForwardHeaders(req.headers);
+
   let childRun: { id: string };
   try {
     childRun = await createRun(
       { serviceName: "cloudflare-storage", taskName: "upload-base64" },
-      { orgId, userId, runId }
+      { orgId, userId, runId },
+      forwardHeaders
     );
   } catch (err) {
     console.error(`${logPrefix} Failed to create run: ${err instanceof Error ? err.message : String(err)}`);
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
-
-  const identity = { orgId, userId };
-  const forwardHeaders = extractForwardHeaders(req.headers);
 
   try {
     const parseResult = UploadBase64RequestSchema.safeParse(req.body);
@@ -304,6 +307,7 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
       brandIds: authReq.brandIds,
       workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
+      audienceId: authReq.audienceId,
     };
 
     console.log(`${logPrefix} Resolving R2 credentials from key-service`);

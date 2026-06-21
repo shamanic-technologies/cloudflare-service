@@ -7,6 +7,7 @@ const FORWARD_HEADER_NAMES = [
   "x-workflow-run-id",
   "x-workflow-step-id",
   "x-feature-slug",
+  "x-audience-id",
 ];
 
 export function extractForwardHeaders(headers: IncomingHttpHeaders): Record<string, string> {

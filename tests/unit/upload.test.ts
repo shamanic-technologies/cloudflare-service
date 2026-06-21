@@ -333,6 +333,44 @@ describe("POST /upload", () => {
       })
     );
   });
+
+  it("forwards x-audience-id to run-create, billing authorize, and cost row; never to external fetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockFetchResponse());
+    globalThis.fetch = fetchMock as never;
+
+    const app = createApp();
+    await request(app)
+      .post("/upload")
+      .set({ ...authHeaders, "x-audience-id": "aud-42" })
+      .send({ sourceUrl: "https://example.com/video.mp4" });
+
+    // run row tagged (createRun receives forwardHeaders incl. audience)
+    expect(createRun).toHaveBeenCalledWith(
+      { serviceName: "cloudflare-storage", taskName: "upload" },
+      expect.any(Object),
+      expect.objectContaining({ "x-audience-id": "aud-42" })
+    );
+    // billing authorize tagged
+    expect(authorizeCustomerBalance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        forwardHeaders: expect.objectContaining({ "x-audience-id": "aud-42" }),
+      })
+    );
+    // cost row tagged
+    expect(declareActualCost).toHaveBeenCalledWith(
+      "run-child-123",
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ "x-audience-id": "aud-42" })
+    );
+    // egress guard: external source download must NOT carry tracking headers
+    const externalCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("example.com")
+    );
+    expect(externalCall).toBeDefined();
+    const externalHeaders = (externalCall?.[1]?.headers ?? {}) as Record<string, string>;
+    expect(externalHeaders["x-audience-id"]).toBeUndefined();
+  });
 });
 
 describe("POST /upload/base64", () => {

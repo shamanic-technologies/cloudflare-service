@@ -20,7 +20,8 @@ interface CreateRunResult {
 
 export async function createRun(
   task: { serviceName: string; taskName: string },
-  identity: RunIdentity
+  identity: RunIdentity,
+  forwardHeaders?: Record<string, string>
 ): Promise<CreateRunResult> {
   const response = await fetch(`${RUNS_SERVICE_URL}/v1/runs`, {
     method: "POST",
@@ -30,6 +31,7 @@ export async function createRun(
       "x-org-id": identity.orgId,
       "x-user-id": identity.userId,
       ...(identity.runId ? { "x-run-id": identity.runId } : {}),
+      ...(forwardHeaders ?? {}),
     },
     body: JSON.stringify({
       serviceName: task.serviceName,

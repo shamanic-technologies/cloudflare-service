@@ -48,19 +48,20 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
   const { orgId, userId, runId } = authReq;
   const logPrefix = `[cloudflare-service] [images] [org=${orgId}]`;
 
+  const identity = { orgId, userId };
+  const forwardHeaders = extractForwardHeaders(req.headers);
+
   let childRun: { id: string };
   try {
     childRun = await createRun(
       { serviceName: "cloudflare-storage", taskName: "get-image" },
-      { orgId, userId, runId }
+      { orgId, userId, runId },
+      forwardHeaders
     );
   } catch (err) {
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
-
-  const identity = { orgId, userId };
-  const forwardHeaders = extractForwardHeaders(req.headers);
 
   try {
     const r2Key = req.params[0];
@@ -88,6 +89,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
       brandIds: authReq.brandIds,
       workflowSlug: authReq.workflowSlug,
       featureSlug: authReq.featureSlug,
+      audienceId: authReq.audienceId,
     };
 
     const [accessKeyResult, secretKeyResult, accountIdResult, bucketNameResult, publicDomainResult] = await Promise.all([

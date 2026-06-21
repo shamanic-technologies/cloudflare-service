@@ -8,4 +8,5 @@ export interface AuthenticatedRequest extends Request {
   brandIds?: string[];
   workflowSlug?: string;
   featureSlug?: string;
+  audienceId?: string;
 }

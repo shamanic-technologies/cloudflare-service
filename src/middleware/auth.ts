@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import type { AuthenticatedRequest } from "../types.js";
+import type { AuthenticatedRequest, PlatformRequest } from "../types.js";
 
 export function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   if (req.path === "/health" || req.path === "/openapi.json") {
@@ -59,6 +59,39 @@ export function serviceAuth(req: Request, res: Response, next: NextFunction): vo
   if (workflowSlug) authReq.workflowSlug = workflowSlug;
   if (featureSlug) authReq.featureSlug = featureSlug;
   if (audienceId) authReq.audienceId = audienceId;
+
+  next();
+}
+
+/**
+ * Platform/internal auth: service API key (validated globally by apiKeyAuth) +
+ * x-service-name. NO x-org-id / x-user-id / x-run-id. Used by service callers
+ * that have no org/user/run identity (e.g. chat-service platform image gen).
+ */
+export function platformAuth(req: Request, res: Response, next: NextFunction): void {
+  const platformReq = req as PlatformRequest;
+  const serviceName = req.headers["x-service-name"] as string | undefined;
+
+  if (!serviceName) {
+    res.status(400).json({ error: "x-service-name header required" });
+    return;
+  }
+
+  platformReq.serviceName = serviceName;
+
+  const campaignId = req.headers["x-campaign-id"] as string | undefined;
+  const rawBrandId = req.headers["x-brand-id"] as string | undefined;
+  const brandIds = rawBrandId
+    ? rawBrandId.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const workflowSlug = req.headers["x-workflow-slug"] as string | undefined;
+  const featureSlug = req.headers["x-feature-slug"] as string | undefined;
+  const audienceId = req.headers["x-audience-id"] as string | undefined;
+  if (campaignId) platformReq.campaignId = campaignId;
+  if (brandIds && brandIds.length > 0) platformReq.brandIds = brandIds;
+  if (workflowSlug) platformReq.workflowSlug = workflowSlug;
+  if (featureSlug) platformReq.featureSlug = featureSlug;
+  if (audienceId) platformReq.audienceId = audienceId;
 
   next();
 }

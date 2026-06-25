@@ -148,4 +148,100 @@ describe("runs-client", () => {
       )
     ).rejects.toThrow(/declareActualCost failed.*422/);
   });
+
+  it("createPlatformRun calls POST /v1/platform-runs with service auth", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ id: "platform-run-123" }),
+    }) as never;
+
+    const { createPlatformRun } = await import("../../src/lib/runs-client.js");
+    const result = await createPlatformRun(
+      { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
+      { "x-audience-id": "aud-1" }
+    );
+
+    expect(result).toEqual({ id: "platform-run-123" });
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(call[0]).toBe("https://runs.example.com/v1/platform-runs");
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Api-Key"]).toBe("test-key");
+    expect(headers["x-service-name"]).toBe("cloudflare-storage");
+    expect(headers["x-audience-id"]).toBe("aud-1");
+    expect(headers["x-org-id"]).toBeUndefined();
+    expect(headers["x-user-id"]).toBeUndefined();
+    expect(JSON.parse(init.body as string)).toEqual({
+      serviceName: "cloudflare-storage",
+      taskName: "upload-base64-platform",
+    });
+  });
+
+  it("declarePlatformActualCost POSTs /v1/platform-runs/:id/costs as actual platform spend", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ costs: [{ id: "cost-1" }] }),
+    }) as never;
+
+    const { declarePlatformActualCost } = await import("../../src/lib/runs-client.js");
+    await declarePlatformActualCost(
+      "platform-run-123",
+      { costName: "cloudflare-r2-class-a-operation", quantity: 1 },
+      { "x-feature-slug": "chat-platform-avatar" }
+    );
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(call[0]).toBe("https://runs.example.com/v1/platform-runs/platform-run-123/costs");
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Api-Key"]).toBe("test-key");
+    expect(headers["x-service-name"]).toBe("cloudflare-storage");
+    expect(headers["x-feature-slug"]).toBe("chat-platform-avatar");
+    expect(headers["x-org-id"]).toBeUndefined();
+    expect(JSON.parse(init.body as string)).toEqual({
+      items: [
+        {
+          costName: "cloudflare-r2-class-a-operation",
+          costSource: "platform",
+          quantity: 1,
+          status: "actual",
+        },
+      ],
+    });
+  });
+
+  it("declarePlatformActualCost throws fail-loud on non-2xx", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      text: () => Promise.resolve('{"error":"Unknown cost name"}'),
+    }) as never;
+
+    const { declarePlatformActualCost } = await import("../../src/lib/runs-client.js");
+    await expect(
+      declarePlatformActualCost("platform-run-123", {
+        costName: "bogus",
+        quantity: 1,
+      })
+    ).rejects.toThrow(/declarePlatformActualCost failed.*422/);
+  });
+
+  it("updatePlatformRun calls PATCH /v1/platform-runs/:id with service auth", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as never;
+
+    const { updatePlatformRun } = await import("../../src/lib/runs-client.js");
+    await updatePlatformRun("platform-run-123", "completed");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://runs.example.com/v1/platform-runs/platform-run-123",
+      expect.objectContaining({ method: "PATCH" })
+    );
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    const headers = (call[1] as RequestInit).headers as Record<string, string>;
+    expect(headers["X-Api-Key"]).toBe("test-key");
+    expect(headers["x-service-name"]).toBe("cloudflare-storage");
+  });
 });

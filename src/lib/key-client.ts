@@ -44,3 +44,38 @@ export async function decryptKey(
   const data = (await response.json()) as { key: string; keySource: "platform" | "org" };
   return { key: data.key, keySource: data.keySource };
 }
+
+/**
+ * Resolve a decrypted PLATFORM key (global, no org/user). Used by internal
+ * service callers that have no org/user/run identity. Hits key-service's
+ * GET /keys/platform/{provider}/decrypt — costSource is always "platform".
+ */
+export async function decryptPlatformKey(
+  provider: string,
+  caller: CallerContext
+): Promise<{ key: string }> {
+  const response = await fetch(`${KEY_SERVICE_URL}/keys/platform/${provider}/decrypt`, {
+    headers: {
+      ...(KEY_SERVICE_API_KEY ? { "X-Api-Key": KEY_SERVICE_API_KEY } : {}),
+      "X-Caller-Service": "cloudflare-storage",
+      "X-Caller-Method": caller.callerMethod,
+      "X-Caller-Path": caller.callerPath,
+      ...(caller.campaignId ? { "x-campaign-id": caller.campaignId } : {}),
+      ...(caller.brandIds?.length ? { "x-brand-id": caller.brandIds.join(",") } : {}),
+      ...(caller.workflowSlug ? { "x-workflow-slug": caller.workflowSlug } : {}),
+      ...(caller.featureSlug ? { "x-feature-slug": caller.featureSlug } : {}),
+      ...(caller.audienceId ? { "x-audience-id": caller.audienceId } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("cloudflare-r2 platform key not configured");
+    }
+    const error = await response.text();
+    throw new Error(`Failed to fetch cloudflare-r2 platform key: ${error}`);
+  }
+
+  const data = (await response.json()) as { provider: string; key: string };
+  return { key: data.key };
+}

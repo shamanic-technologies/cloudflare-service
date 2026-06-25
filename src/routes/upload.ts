@@ -1,18 +1,24 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
-import { serviceAuth } from "../middleware/auth.js";
+import { serviceAuth, platformAuth } from "../middleware/auth.js";
 import { UploadBase64RequestSchema, UploadRequestSchema } from "../schemas.js";
-import { decryptKey } from "../lib/key-client.js";
-import { createRun, updateRun, declareActualCost } from "../lib/runs-client.js";
+import { decryptKey, decryptPlatformKey } from "../lib/key-client.js";
+import {
+  createRun,
+  updateRun,
+  declareActualCost,
+  createPlatformRun,
+  updatePlatformRun,
+  declarePlatformActualCost,
+} from "../lib/runs-client.js";
 import { authorizeCustomerBalance } from "../lib/billing-client.js";
 import { uploadToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { extractForwardHeaders } from "../lib/forward-headers.js";
-import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
-import type { AuthenticatedRequest } from "../types.js";
+import type { AuthenticatedRequest, PlatformRequest } from "../types.js";
 import type { Response } from "express";
 
 const router = Router();
@@ -430,6 +436,149 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
     let reason = errMsg;
     try {
       await updateRun(childRun.id, "failed", identity);
+    } catch (updateErr) {
+      reason = `${errMsg}; failed to mark run failed: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}`;
+    }
+    res.status(502).json({
+      error: "Upload failed",
+      reason,
+    });
+  }
+});
+
+// Platform/internal base64 upload — service auth only, no org/user/run.
+// Uses platform R2 credentials + a platform-run for cost tracking (no balance
+// authorize). Metadata is persisted with null org/user owner.
+router.post("/internal/upload/base64", platformAuth, async (req, res: Response) => {
+  const platformReq = req as PlatformRequest;
+  const { serviceName } = platformReq;
+
+  const logPrefix = `[cloudflare-service] [internal-upload-base64] [caller=${serviceName}]`;
+  console.log(`${logPrefix} Starting platform upload`);
+
+  const forwardHeaders = extractForwardHeaders(req.headers);
+
+  let platformRun: { id: string };
+  try {
+    platformRun = await createPlatformRun(
+      { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
+      forwardHeaders
+    );
+  } catch (err) {
+    console.error(`${logPrefix} Failed to create platform run: ${err instanceof Error ? err.message : String(err)}`);
+    res.status(502).json({ error: "Failed to create run", reason: String(err) });
+    return;
+  }
+
+  try {
+    const parseResult = UploadBase64RequestSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      const reason = parseResult.error.issues.map((i) => i.message).join(", ");
+      console.warn(`${logPrefix} Invalid request body: ${reason}`);
+      res.status(400).json({ error: "Invalid request body", reason });
+      await updatePlatformRun(platformRun.id, "failed");
+      return;
+    }
+
+    const { contentBase64, folder, filename, contentType } = parseResult.data;
+    const decoded = parseBase64Content(contentBase64);
+    if (!decoded) {
+      console.warn(`${logPrefix} Invalid base64 payload`);
+      res.status(400).json({ error: "Invalid request body", reason: "contentBase64 must be valid non-empty base64" });
+      await updatePlatformRun(platformRun.id, "failed");
+      return;
+    }
+
+    const resolvedContentType = contentType || decoded.contentType || "application/octet-stream";
+    const resolvedFilename = filename || `${randomUUID()}`;
+    const r2Key = folder ? `${folder}/${resolvedFilename}` : resolvedFilename;
+
+    traceEvent(
+      platformRun.id,
+      { service: "cloudflare-service", event: "internal-upload-base64:start", data: { bytes: decoded.buffer.length, r2Key } },
+      req.headers
+    );
+
+    const callerContext = {
+      callerMethod: "POST",
+      callerPath: "/internal/upload/base64",
+      campaignId: platformReq.campaignId,
+      brandIds: platformReq.brandIds,
+      workflowSlug: platformReq.workflowSlug,
+      featureSlug: platformReq.featureSlug,
+      audienceId: platformReq.audienceId,
+    };
+
+    console.log(`${logPrefix} Resolving platform R2 credentials from key-service`);
+    const keyStart = Date.now();
+    const [accessKeyResult, secretKeyResult, accountIdResult, bucketNameResult, publicDomainResult] = await Promise.all([
+      decryptPlatformKey("cloudflare-r2-access-key-id", callerContext),
+      decryptPlatformKey("cloudflare-r2-secret-access-key", callerContext),
+      decryptPlatformKey("cloudflare-r2-account-id", callerContext),
+      decryptPlatformKey("cloudflare-r2-bucket-name", callerContext),
+      decryptPlatformKey("cloudflare-r2-public-domain", callerContext),
+    ]);
+    console.log(`${logPrefix} Platform R2 credentials resolved in ${Date.now() - keyStart}ms`);
+
+    const r2Config: R2Config = {
+      accessKeyId: accessKeyResult.key,
+      secretAccessKey: secretKeyResult.key,
+      accountId: accountIdResult.key,
+      bucketName: bucketNameResult.key,
+      publicDomain: publicDomainResult.key,
+    };
+
+    console.log(`${logPrefix} Uploading to R2 — key=${r2Key}, size=${decoded.buffer.length}`);
+    const r2Start = Date.now();
+    const publicUrl = await uploadToR2(r2Config, r2Key, decoded.buffer, resolvedContentType);
+    console.log(`${logPrefix} R2 upload completed in ${Date.now() - r2Start}ms — url=${publicUrl}`);
+    traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:r2-complete", data: { r2Key, uploadMs: Date.now() - r2Start } }, req.headers);
+
+    const [record] = await db
+      .insert(files)
+      .values({
+        orgId: null,
+        userId: null,
+        folder: folder || null,
+        filename: resolvedFilename,
+        r2Key,
+        publicUrl,
+        sourceUrl: null,
+        contentType: resolvedContentType,
+        sizeBytes: decoded.buffer.length,
+      })
+      .onConflictDoUpdate({
+        target: files.r2Key,
+        set: { sourceUrl: null },
+      })
+      .returning();
+
+    // Platform spend: declare actual cost (costSource=platform). No authorize.
+    await declarePlatformActualCost(
+      platformRun.id,
+      { costName: UPLOAD_COST_NAME, quantity: 1 },
+      forwardHeaders
+    );
+
+    await updatePlatformRun(platformRun.id, "completed");
+
+    console.log(`${logPrefix} Upload complete — id=${record.id}, url=${publicUrl}`);
+    traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:complete", data: { fileId: record.id, sizeBytes: decoded.buffer.length } }, req.headers);
+
+    res.json({
+      id: record.id,
+      url: record.publicUrl,
+      size: record.sizeBytes,
+      contentType: record.contentType,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : undefined;
+    console.error(`${logPrefix} Upload failed — error=${errMsg}`, errStack ? `\n${errStack}` : "");
+    traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:error", level: "error", detail: errMsg }, req.headers);
+    let reason = errMsg;
+    try {
+      await updatePlatformRun(platformRun.id, "failed");
     } catch (updateErr) {
       reason = `${errMsg}; failed to mark run failed: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}`;
     }

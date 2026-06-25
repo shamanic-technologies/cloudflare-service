@@ -11,5 +11,9 @@ export const files = pgTable("files", {
   sourceUrl: text("source_url"),
   contentType: text("content_type"),
   sizeBytes: integer("size_bytes"),
+  brandIds: text("brand_ids").array(),
+  campaignId: uuid("campaign_id"),
+  workflowSlug: text("workflow_slug"),
+  featureSlug: text("feature_slug"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

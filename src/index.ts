@@ -6,6 +6,7 @@ import healthRouter from "./routes/health.js";
 import uploadRouter from "./routes/upload.js";
 import filesRouter from "./routes/files.js";
 import imagesRouter from "./routes/images.js";
+import internalRouter from "./routes/internal.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -29,6 +30,7 @@ app.use(healthRouter);
 app.use(uploadRouter);
 app.use(filesRouter);
 app.use(imagesRouter);
+app.use(internalRouter);
 
 app.listen(PORT, () => {
   console.log(`cloudflare-storage-service listening on port ${PORT}`);

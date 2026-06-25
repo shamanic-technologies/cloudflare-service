@@ -7,10 +7,14 @@ vi.mock("../../src/lib/runs-client.js", () => ({
   createRun: vi.fn().mockResolvedValue({ id: "run-child-123" }),
   updateRun: vi.fn().mockResolvedValue(undefined),
   declareActualCost: vi.fn().mockResolvedValue(undefined),
+  createPlatformRun: vi.fn().mockResolvedValue({ id: "platform-run-123" }),
+  updatePlatformRun: vi.fn().mockResolvedValue(undefined),
+  declarePlatformActualCost: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/key-client.js", () => ({
   decryptKey: vi.fn().mockResolvedValue({ key: "mock-key", keySource: "platform" }),
+  decryptPlatformKey: vi.fn().mockResolvedValue({ key: "mock-key" }),
 }));
 
 vi.mock("../../src/lib/billing-client.js", () => ({
@@ -47,9 +51,16 @@ vi.mock("../../src/db/index.js", () => {
 });
 
 import uploadRouter from "../../src/routes/upload.js";
-import { createRun, updateRun, declareActualCost } from "../../src/lib/runs-client.js";
+import {
+  createRun,
+  updateRun,
+  declareActualCost,
+  createPlatformRun,
+  updatePlatformRun,
+  declarePlatformActualCost,
+} from "../../src/lib/runs-client.js";
 import { authorizeCustomerBalance } from "../../src/lib/billing-client.js";
-import { decryptKey } from "../../src/lib/key-client.js";
+import { decryptKey, decryptPlatformKey } from "../../src/lib/key-client.js";
 import { uploadToR2 } from "../../src/lib/r2-client.js";
 import { db } from "../../src/db/index.js";
 
@@ -460,5 +471,180 @@ describe("POST /upload/base64", () => {
       Buffer.from("png-bytes"),
       "image/png"
     );
+  });
+});
+
+describe("POST /internal/upload/base64", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
+    vi.mocked(decryptPlatformKey).mockResolvedValue({ key: "mock-key" });
+    globalThis.fetch = vi.fn() as never;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("accepts service auth only, uploads to R2, declares platform cost, and returns public URL", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+      })
+      .send({
+        contentBase64: Buffer.from("avatar-bytes").toString("base64"),
+        folder: "platform/avatars",
+        filename: "avatar.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      id: "00000000-0000-0000-0000-000000000099",
+      url: "https://storage.mcpfactory.org/videos/test.mp4",
+      size: 1024,
+      contentType: "video/mp4",
+    });
+    expect(createPlatformRun).toHaveBeenCalledWith(
+      { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
+      {}
+    );
+    expect(decryptPlatformKey).toHaveBeenCalledTimes(5);
+    expect(authorizeCustomerBalance).not.toHaveBeenCalled();
+    expect(uploadToR2).toHaveBeenCalledWith(
+      expect.objectContaining({ bucketName: "mock-key" }),
+      "platform/avatars/avatar.png",
+      Buffer.from("avatar-bytes"),
+      "image/png"
+    );
+    expect(declarePlatformActualCost).toHaveBeenCalledWith(
+      "platform-run-123",
+      { costName: "cloudflare-r2-class-a-operation", quantity: 1 },
+      {}
+    );
+    expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "completed");
+
+    const insertMock = vi.mocked(db.insert);
+    const valuesMock = insertMock.mock.results[0]?.value.values;
+    expect(valuesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: null,
+        userId: null,
+        folder: "platform/avatars",
+        filename: "avatar.png",
+        r2Key: "platform/avatars/avatar.png",
+        sourceUrl: null,
+      })
+    );
+  });
+
+  it("rejects calls missing x-service-name", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({ "X-Api-Key": "test-api-key" })
+      .send({ contentBase64: Buffer.from("bytes").toString("base64") });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("x-service-name header required");
+    expect(createPlatformRun).not.toHaveBeenCalled();
+    expect(uploadToR2).not.toHaveBeenCalled();
+  });
+
+  it("rejects calls missing the service API key", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({ "x-service-name": "chat-service" })
+      .send({ contentBase64: Buffer.from("bytes").toString("base64") });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("Invalid or missing API key");
+    expect(createPlatformRun).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for invalid body and marks the platform run failed", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+      })
+      .send({ folder: "platform/avatars" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request body");
+    expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "failed");
+    expect(uploadToR2).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for invalid base64 and marks the platform run failed", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+      })
+      .send({ contentBase64: "not base64!" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("contentBase64 must be valid non-empty base64");
+    expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "failed");
+    expect(uploadToR2).not.toHaveBeenCalled();
+  });
+
+  it("fails loud when R2 upload fails and does not declare cost", async () => {
+    vi.mocked(uploadToR2).mockRejectedValueOnce(new Error("R2 PutObject timeout"));
+
+    const errorSpy = vi.spyOn(console, "error");
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+      })
+      .send({
+        contentBase64: Buffer.from("avatar-bytes").toString("base64"),
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("Upload failed");
+    expect(res.body.reason).toBe("R2 PutObject timeout");
+    expect(declarePlatformActualCost).not.toHaveBeenCalled();
+    expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "failed");
+    errorSpy.mockRestore();
+  });
+
+  it("fails loud when platform cost declaration fails after storage", async () => {
+    vi.mocked(declarePlatformActualCost).mockRejectedValueOnce(
+      new Error("runs-service declarePlatformActualCost failed")
+    );
+
+    const errorSpy = vi.spyOn(console, "error");
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+      })
+      .send({
+        contentBase64: Buffer.from("avatar-bytes").toString("base64"),
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(502);
+    expect(res.body.reason).toBe("runs-service declarePlatformActualCost failed");
+    expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "failed");
+    errorSpy.mockRestore();
   });
 });

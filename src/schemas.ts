@@ -22,6 +22,21 @@ const identityHeaders = {
   }),
 };
 
+const platformHeaders = {
+  "x-service-name": z.string().openapi({
+    description: "Internal caller service name",
+    example: "chat-service",
+  }),
+  "x-campaign-id": z.string().optional().openapi({ description: "Optional campaign attribution" }),
+  "x-brand-id": z.string().optional().openapi({
+    description: "Optional comma-separated brand attribution",
+    example: "00000000-0000-0000-0000-000000000001",
+  }),
+  "x-workflow-slug": z.string().optional().openapi({ description: "Optional workflow attribution" }),
+  "x-feature-slug": z.string().optional().openapi({ description: "Optional feature attribution" }),
+  "x-audience-id": z.string().optional().openapi({ description: "Optional audience attribution" }),
+};
+
 // --- Health ---
 
 export const HealthResponseSchema = z.object({
@@ -118,6 +133,38 @@ registry.registerPath({
     },
     400: {
       description: "Invalid request",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    502: {
+      description: "Upload failed",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/upload/base64",
+  summary: "Upload platform base64 content to R2",
+  description: "Decodes base64 file content from an internal service caller and uploads it to Cloudflare R2 without org, user, or parent run identity.",
+  security: [{ [ApiKeyHeader.name]: [] }],
+  request: {
+    headers: z.object(platformHeaders),
+    body: {
+      content: { "application/json": { schema: UploadBase64RequestSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: "File uploaded successfully",
+      content: { "application/json": { schema: UploadResponseSchema } },
+    },
+    400: {
+      description: "Invalid request or missing x-service-name",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    401: {
+      description: "Invalid or missing service API key",
       content: { "application/json": { schema: ErrorResponseSchema } },
     },
     502: {

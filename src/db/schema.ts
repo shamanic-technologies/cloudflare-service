@@ -2,8 +2,10 @@ import { pgTable, uuid, text, integer, timestamp } from "drizzle-orm/pg-core";
 
 export const files = pgTable("files", {
   id: uuid("id").defaultRandom().primaryKey(),
-  orgId: uuid("org_id").notNull(),
-  userId: uuid("user_id").notNull(),
+  // Nullable: platform/internal uploads (POST /internal/upload/base64) have no
+  // org/user. Org uploads still always populate both.
+  orgId: uuid("org_id"),
+  userId: uuid("user_id"),
   folder: text("folder"),
   filename: text("filename").notNull(),
   r2Key: text("r2_key").notNull().unique(),

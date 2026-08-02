@@ -58,11 +58,24 @@ registry.registerPath({
 
 // --- Upload ---
 
+const optimizeForField = z.enum(["email"]).optional().openapi({
+  description:
+    "Optimise the stored object for a delivery target before writing it to R2. " +
+    "Omit it and the upload is stored byte-for-byte as supplied. " +
+    "'email' bounds the image to 1200x1200 (fit inside, never upscaled), bakes in EXIF " +
+    "orientation, strips metadata, and re-encodes to JPEG (or PNG when the source has " +
+    "transparency) so every mail client can draw it — never WebP or AVIF. Animated GIFs are " +
+    "stored unchanged. The returned public URL stays a plain unauthenticated link, and the " +
+    "returned filename extension follows the stored format.",
+  example: "email",
+});
+
 export const UploadRequestSchema = z.object({
   sourceUrl: z.string().url().openapi({ description: "URL to download the file from" }),
   folder: z.string().optional().openapi({ description: "R2 key prefix/folder" }),
   filename: z.string().optional().openapi({ description: "Desired filename" }),
   contentType: z.string().optional().openapi({ description: "MIME type" }),
+  optimizeFor: optimizeForField,
 }).openapi("UploadRequest");
 
 export const UploadBase64RequestSchema = z.object({
@@ -72,6 +85,7 @@ export const UploadBase64RequestSchema = z.object({
   folder: z.string().optional().openapi({ description: "R2 key prefix/folder" }),
   filename: z.string().optional().openapi({ description: "Desired filename" }),
   contentType: z.string().optional().openapi({ description: "MIME type" }),
+  optimizeFor: optimizeForField,
 }).openapi("UploadBase64Request");
 
 export const UploadResponseSchema = z.object({
@@ -79,6 +93,15 @@ export const UploadResponseSchema = z.object({
   url: z.string().url().openapi({ description: "Permanent public URL" }),
   size: z.number().int().openapi({ description: "File size in bytes" }),
   contentType: z.string().openapi({ description: "MIME type" }),
+  optimizedFor: z.enum(["email"]).optional().openapi({
+    description: "Present only when optimizeFor was requested and the stored bytes were re-encoded.",
+  }),
+  width: z.number().int().optional().openapi({
+    description: "Stored image width in pixels. Present only when optimizeFor was requested.",
+  }),
+  height: z.number().int().optional().openapi({
+    description: "Stored image height in pixels. Present only when optimizeFor was requested.",
+  }),
 }).openapi("UploadResponse");
 
 export const ErrorResponseSchema = z.object({

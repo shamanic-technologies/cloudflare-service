@@ -56,6 +56,21 @@
           "contentType": {
             "type": "string",
             "description": "MIME type"
+          },
+          "optimizedFor": {
+            "type": "string",
+            "enum": [
+              "email"
+            ],
+            "description": "Present only when optimizeFor was requested and the stored bytes were re-encoded."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Stored image width in pixels. Present only when optimizeFor was requested."
+          },
+          "height": {
+            "type": "integer",
+            "description": "Stored image height in pixels. Present only when optimizeFor was requested."
           }
         },
         "required": [
@@ -98,6 +113,14 @@
           "contentType": {
             "type": "string",
             "description": "MIME type"
+          },
+          "optimizeFor": {
+            "type": "string",
+            "enum": [
+              "email"
+            ],
+            "description": "Optimise the stored object for a delivery target before writing it to R2. Omit it and the upload is stored byte-for-byte as supplied. 'email' bounds the image to 1200x1200 (fit inside, never upscaled), bakes in EXIF orientation, strips metadata, and re-encodes to JPEG (or PNG when the source has transparency) so every mail client can draw it — never WebP or AVIF. Animated GIFs are stored unchanged. The returned public URL stays a plain unauthenticated link, and the returned filename extension follows the stored format.",
+            "example": "email"
           }
         },
         "required": [
@@ -122,6 +145,14 @@
           "contentType": {
             "type": "string",
             "description": "MIME type"
+          },
+          "optimizeFor": {
+            "type": "string",
+            "enum": [
+              "email"
+            ],
+            "description": "Optimise the stored object for a delivery target before writing it to R2. Omit it and the upload is stored byte-for-byte as supplied. 'email' bounds the image to 1200x1200 (fit inside, never upscaled), bakes in EXIF orientation, strips metadata, and re-encodes to JPEG (or PNG when the source has transparency) so every mail client can draw it — never WebP or AVIF. Animated GIFs are stored unchanged. The returned public URL stays a plain unauthenticated link, and the returned filename extension follows the stored format.",
+            "example": "email"
           }
         },
         "required": [

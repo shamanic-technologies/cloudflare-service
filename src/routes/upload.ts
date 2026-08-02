@@ -14,6 +14,8 @@ import {
 import { authorizeCustomerBalance } from "../lib/billing-client.js";
 import { uploadToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
+import { optimizeImageForEmail, EmailOptimizeError } from "../lib/email-image.js";
+import type { OptimizedImage } from "../lib/email-image.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { extractForwardHeaders } from "../lib/forward-headers.js";
 import { db } from "../db/index.js";
@@ -79,7 +81,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       return;
     }
 
-    const { sourceUrl, folder, filename, contentType } = parseResult.data;
+    const { sourceUrl, folder, filename, contentType, optimizeFor } = parseResult.data;
 
     traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:start", detail: `sourceUrl=${sourceUrl}` }, req.headers);
 
@@ -98,18 +100,34 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       return;
     }
 
-    const fileBuffer = Buffer.from(await sourceResponse.arrayBuffer());
-    const resolvedContentType =
+    const sourceBuffer = Buffer.from(await sourceResponse.arrayBuffer());
+    const sourceContentType =
       contentType ||
       sourceResponse.headers.get("content-type") ||
       "application/octet-stream";
 
-    console.log(`${logPrefix} Downloaded ${fileBuffer.length} bytes in ${fetchMs}ms — contentType=${resolvedContentType}`);
-    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:downloaded", data: { bytes: fileBuffer.length, fetchMs } }, req.headers);
+    console.log(`${logPrefix} Downloaded ${sourceBuffer.length} bytes in ${fetchMs}ms — contentType=${sourceContentType}`);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:downloaded", data: { bytes: sourceBuffer.length, fetchMs } }, req.headers);
 
     // Derive filename
-    const resolvedFilename =
+    const sourceFilename =
       filename || extractFilename(sourceUrl) || `${randomUUID()}`;
+
+    // Optionally re-encode for the requested delivery target before storing.
+    let optimized: OptimizedImage | null;
+    try {
+      optimized = await applyOptimizeFor(optimizeFor, sourceBuffer, sourceFilename, sourceContentType, logPrefix);
+    } catch (err) {
+      if (!(err instanceof EmailOptimizeError)) throw err;
+      console.warn(`${logPrefix} optimizeFor=${optimizeFor} rejected: ${err.message}`);
+      res.status(400).json({ error: "Invalid request body", reason: `optimizeFor=${optimizeFor}: ${err.message}` });
+      await updateRun(childRun.id, "failed", identity);
+      return;
+    }
+
+    const fileBuffer = optimized ? optimized.buffer : sourceBuffer;
+    const resolvedContentType = optimized ? optimized.contentType : sourceContentType;
+    const resolvedFilename = optimized ? optimized.filename : sourceFilename;
 
     // Build R2 key
     const r2Key = folder ? `${folder}/${resolvedFilename}` : resolvedFilename;
@@ -240,6 +258,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       url: record.publicUrl,
       size: record.sizeBytes,
       contentType: record.contentType,
+      ...optimizeResponseFields(optimizeFor, optimized),
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -287,7 +306,7 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
       return;
     }
 
-    const { contentBase64, folder, filename, contentType } = parseResult.data;
+    const { contentBase64, folder, filename, contentType, optimizeFor } = parseResult.data;
     const decoded = parseBase64Content(contentBase64);
     if (!decoded) {
       console.warn(`${logPrefix} Invalid base64 payload`);
@@ -296,13 +315,29 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
       return;
     }
 
-    const resolvedContentType = contentType || decoded.contentType || "application/octet-stream";
-    const resolvedFilename = filename || `${randomUUID()}`;
+    const sourceContentType = contentType || decoded.contentType || "application/octet-stream";
+    const sourceFilename = filename || `${randomUUID()}`;
+
+    // Optionally re-encode for the requested delivery target before storing.
+    let optimized: OptimizedImage | null;
+    try {
+      optimized = await applyOptimizeFor(optimizeFor, decoded.buffer, sourceFilename, sourceContentType, logPrefix);
+    } catch (err) {
+      if (!(err instanceof EmailOptimizeError)) throw err;
+      console.warn(`${logPrefix} optimizeFor=${optimizeFor} rejected: ${err.message}`);
+      res.status(400).json({ error: "Invalid request body", reason: `optimizeFor=${optimizeFor}: ${err.message}` });
+      await updateRun(childRun.id, "failed", identity);
+      return;
+    }
+
+    const fileBuffer = optimized ? optimized.buffer : decoded.buffer;
+    const resolvedContentType = optimized ? optimized.contentType : sourceContentType;
+    const resolvedFilename = optimized ? optimized.filename : sourceFilename;
     const r2Key = folder ? `${folder}/${resolvedFilename}` : resolvedFilename;
 
     traceEvent(
       childRun.id,
-      { service: "cloudflare-service", event: "upload-base64:start", data: { bytes: decoded.buffer.length, r2Key } },
+      { service: "cloudflare-service", event: "upload-base64:start", data: { bytes: fileBuffer.length, r2Key } },
       req.headers
     );
 
@@ -380,12 +415,12 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
       publicDomain: publicDomainResult.key,
     };
 
-    console.log(`${logPrefix} Uploading to R2 — key=${r2Key}, size=${decoded.buffer.length}`);
+    console.log(`${logPrefix} Uploading to R2 — key=${r2Key}, size=${fileBuffer.length}`);
     const r2Start = Date.now();
     const publicUrl = await uploadToR2(
       r2Config,
       r2Key,
-      decoded.buffer,
+      fileBuffer,
       resolvedContentType
     );
     console.log(`${logPrefix} R2 upload completed in ${Date.now() - r2Start}ms — url=${publicUrl}`);
@@ -402,7 +437,7 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
         publicUrl,
         sourceUrl: null,
         contentType: resolvedContentType,
-        sizeBytes: decoded.buffer.length,
+        sizeBytes: fileBuffer.length,
       })
       .onConflictDoUpdate({
         target: files.r2Key,
@@ -420,13 +455,14 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
     await updateRun(childRun.id, "completed", identity);
 
     console.log(`${logPrefix} Upload complete — id=${record.id}, url=${publicUrl}`);
-    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload-base64:complete", data: { fileId: record.id, sizeBytes: decoded.buffer.length } }, req.headers);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "upload-base64:complete", data: { fileId: record.id, sizeBytes: fileBuffer.length } }, req.headers);
 
     res.json({
       id: record.id,
       url: record.publicUrl,
       size: record.sizeBytes,
       contentType: record.contentType,
+      ...optimizeResponseFields(optimizeFor, optimized),
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -480,7 +516,7 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
       return;
     }
 
-    const { contentBase64, folder, filename, contentType } = parseResult.data;
+    const { contentBase64, folder, filename, contentType, optimizeFor } = parseResult.data;
     const decoded = parseBase64Content(contentBase64);
     if (!decoded) {
       console.warn(`${logPrefix} Invalid base64 payload`);
@@ -489,13 +525,29 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
       return;
     }
 
-    const resolvedContentType = contentType || decoded.contentType || "application/octet-stream";
-    const resolvedFilename = filename || `${randomUUID()}`;
+    const sourceContentType = contentType || decoded.contentType || "application/octet-stream";
+    const sourceFilename = filename || `${randomUUID()}`;
+
+    // Optionally re-encode for the requested delivery target before storing.
+    let optimized: OptimizedImage | null;
+    try {
+      optimized = await applyOptimizeFor(optimizeFor, decoded.buffer, sourceFilename, sourceContentType, logPrefix);
+    } catch (err) {
+      if (!(err instanceof EmailOptimizeError)) throw err;
+      console.warn(`${logPrefix} optimizeFor=${optimizeFor} rejected: ${err.message}`);
+      res.status(400).json({ error: "Invalid request body", reason: `optimizeFor=${optimizeFor}: ${err.message}` });
+      await updatePlatformRun(platformRun.id, "failed");
+      return;
+    }
+
+    const fileBuffer = optimized ? optimized.buffer : decoded.buffer;
+    const resolvedContentType = optimized ? optimized.contentType : sourceContentType;
+    const resolvedFilename = optimized ? optimized.filename : sourceFilename;
     const r2Key = folder ? `${folder}/${resolvedFilename}` : resolvedFilename;
 
     traceEvent(
       platformRun.id,
-      { service: "cloudflare-service", event: "internal-upload-base64:start", data: { bytes: decoded.buffer.length, r2Key } },
+      { service: "cloudflare-service", event: "internal-upload-base64:start", data: { bytes: fileBuffer.length, r2Key } },
       req.headers
     );
 
@@ -528,9 +580,9 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
       publicDomain: publicDomainResult.key,
     };
 
-    console.log(`${logPrefix} Uploading to R2 — key=${r2Key}, size=${decoded.buffer.length}`);
+    console.log(`${logPrefix} Uploading to R2 — key=${r2Key}, size=${fileBuffer.length}`);
     const r2Start = Date.now();
-    const publicUrl = await uploadToR2(r2Config, r2Key, decoded.buffer, resolvedContentType);
+    const publicUrl = await uploadToR2(r2Config, r2Key, fileBuffer, resolvedContentType);
     console.log(`${logPrefix} R2 upload completed in ${Date.now() - r2Start}ms — url=${publicUrl}`);
     traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:r2-complete", data: { r2Key, uploadMs: Date.now() - r2Start } }, req.headers);
 
@@ -545,7 +597,7 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
         publicUrl,
         sourceUrl: null,
         contentType: resolvedContentType,
-        sizeBytes: decoded.buffer.length,
+        sizeBytes: fileBuffer.length,
       })
       .onConflictDoUpdate({
         target: files.r2Key,
@@ -563,13 +615,14 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
     await updatePlatformRun(platformRun.id, "completed");
 
     console.log(`${logPrefix} Upload complete — id=${record.id}, url=${publicUrl}`);
-    traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:complete", data: { fileId: record.id, sizeBytes: decoded.buffer.length } }, req.headers);
+    traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:complete", data: { fileId: record.id, sizeBytes: fileBuffer.length } }, req.headers);
 
     res.json({
       id: record.id,
       url: record.publicUrl,
       size: record.sizeBytes,
       contentType: record.contentType,
+      ...optimizeResponseFields(optimizeFor, optimized),
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -588,6 +641,43 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
     });
   }
 });
+
+/**
+ * Run the requested delivery-target optimisation, or return null when none was
+ * requested — in which case the upload stores the source bytes untouched.
+ * Throws EmailOptimizeError when the payload is not a decodable raster image.
+ */
+async function applyOptimizeFor(
+  optimizeFor: "email" | undefined,
+  buffer: Buffer,
+  filename: string,
+  contentType: string,
+  logPrefix: string
+): Promise<OptimizedImage | null> {
+  if (optimizeFor !== "email") return null;
+
+  const start = Date.now();
+  const result = await optimizeImageForEmail(buffer, filename, contentType);
+  console.log(
+    `${logPrefix} optimizeFor=email applied=${result.applied} ${buffer.length}B -> ${result.buffer.length}B ` +
+      `contentType=${result.contentType} dims=${result.width}x${result.height} in ${Date.now() - start}ms` +
+      (result.reason ? ` reason=${result.reason}` : "")
+  );
+  return result;
+}
+
+/** Optimisation fields are present only when optimizeFor was requested. */
+function optimizeResponseFields(
+  optimizeFor: "email" | undefined,
+  optimized: OptimizedImage | null
+): Record<string, unknown> {
+  if (!optimizeFor || !optimized) return {};
+  return {
+    ...(optimized.applied ? { optimizedFor: optimizeFor } : {}),
+    ...(optimized.width ? { width: optimized.width } : {}),
+    ...(optimized.height ? { height: optimized.height } : {}),
+  };
+}
 
 function extractFilename(url: string): string | null {
   try {

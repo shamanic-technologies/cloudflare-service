@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import express from "express";
+import sharp from "sharp";
 import { apiKeyAuth } from "../../src/middleware/auth.js";
+import { EMAIL_MAX_WIDTH } from "../../src/lib/email-image.js";
 
 vi.mock("../../src/lib/runs-client.js", () => ({
   createRun: vi.fn().mockResolvedValue({ id: "run-child-123" }),
@@ -66,7 +68,7 @@ import { db } from "../../src/db/index.js";
 
 function createApp() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: "100mb" }));
   app.use(apiKeyAuth);
   app.use(uploadRouter);
   return app;
@@ -87,6 +89,23 @@ function mockFetchResponse(overrides: Partial<{ ok: boolean; status: number; con
     headers: { get: (_name: string) => contentType },
     arrayBuffer: () => Promise.resolve(body),
   };
+}
+
+function toArrayBuffer(buf: Buffer): ArrayBuffer {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+}
+
+/** Noisy WebP so the encoder has real detail and the re-encode is always applied. */
+async function webpSource(width = 1400, height = 1000): Promise<Buffer> {
+  const pixels = Buffer.alloc(width * height * 3);
+  for (let i = 0; i < pixels.length; i += 3) {
+    const x = (i / 3) % width;
+    const y = Math.floor(i / 3 / width);
+    pixels[i] = (x * 7 + y * 13) % 256;
+    pixels[i + 1] = (x * 3 + y * 29) % 256;
+    pixels[i + 2] = (x * 17 + y * 5) % 256;
+  }
+  return sharp(pixels, { raw: { width, height, channels: 3 } }).webp().toBuffer();
 }
 
 describe("POST /upload", () => {
@@ -382,6 +401,73 @@ describe("POST /upload", () => {
     const externalHeaders = (externalCall?.[1]?.headers ?? {}) as Record<string, string>;
     expect(externalHeaders["x-audience-id"]).toBeUndefined();
   });
+
+  it("optimizeFor=email stores a mail-ready re-encode and reports it", async () => {
+    const source = await webpSource();
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ contentType: "image/webp", body: toArrayBuffer(source) })) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/shot.webp",
+      filename: "shot.webp",
+      optimizeFor: "email",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.optimizedFor).toBe("email");
+    expect(res.body.width).toBe(EMAIL_MAX_WIDTH);
+
+    const [config, key, buffer, contentType] = vi.mocked(uploadToR2).mock.calls[0] as [
+      unknown,
+      string,
+      Buffer,
+      string
+    ];
+    expect(key).toBe("shot.jpg");
+    expect(contentType).toBe("image/jpeg");
+    expect(buffer.length).toBeLessThan(source.length);
+    expect(config).toBeDefined();
+  });
+
+  it("optimizeFor=email rejects a non-image source with 400", async () => {
+    const text = Buffer.from("this is a plain text file");
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ contentType: "text/plain", body: toArrayBuffer(text) })) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/notes.txt",
+      optimizeFor: "email",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request body");
+    expect(res.body.reason).toContain("optimizeFor=email");
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("without optimizeFor the source bytes are stored byte-for-byte", async () => {
+    const source = Buffer.from("raw-avatar-bytes");
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ contentType: "image/png", body: toArrayBuffer(source) })) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/avatar.png",
+      filename: "avatar.png",
+      contentType: "image/png",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.optimizedFor).toBeUndefined();
+    expect(vi.mocked(uploadToR2).mock.calls[0][2]).toStrictEqual(source);
+    expect(vi.mocked(uploadToR2).mock.calls[0][3]).toBe("image/png");
+  });
 });
 
 describe("POST /upload/base64", () => {
@@ -471,6 +557,32 @@ describe("POST /upload/base64", () => {
       Buffer.from("png-bytes"),
       "image/png"
     );
+  });
+
+  it("optimizeFor=email optimizes a base64 image before storage", async () => {
+    const source = await webpSource();
+
+    const app = createApp();
+    const res = await request(app).post("/upload/base64").set(authHeaders).send({
+      contentBase64: source.toString("base64"),
+      filename: "shot.webp",
+      contentType: "image/webp",
+      optimizeFor: "email",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.optimizedFor).toBe("email");
+
+    const [config, key, buffer, contentType] = vi.mocked(uploadToR2).mock.calls[0] as [
+      unknown,
+      string,
+      Buffer,
+      string
+    ];
+    expect(key).toBe("shot.jpg");
+    expect(contentType).toBe("image/jpeg");
+    expect(buffer.length).toBeLessThan(source.length);
+    expect(config).toBeDefined();
   });
 });
 
@@ -646,5 +758,26 @@ describe("POST /internal/upload/base64", () => {
     expect(res.body.reason).toBe("runs-service declarePlatformActualCost failed");
     expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "failed");
     errorSpy.mockRestore();
+  });
+
+  it("optimizeFor=email rejects a non-image with 400 and marks the platform run failed", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+      })
+      .send({
+        contentBase64: Buffer.from("plain text").toString("base64"),
+        contentType: "text/plain",
+        optimizeFor: "email",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid request body");
+    expect(res.body.reason).toContain("optimizeFor=email");
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(updatePlatformRun).toHaveBeenCalledWith("platform-run-123", "failed");
   });
 });

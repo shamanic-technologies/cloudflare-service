@@ -56,6 +56,33 @@ The job lists platform keys at startup, takes every provider matching
 the database from the next run. The consolidation from ~29 Neon projects to 1-2
 is therefore a key-service change only.
 
+### Register the DIRECT Neon endpoint, not the pooler
+
+Strip `-pooler` from the host before registering a Neon DSN. The pooled endpoint
+is PgBouncer in transaction mode and cannot hold the session-level snapshot
+`pg_dump` needs, so a pooled DSN either fails or produces an inconsistent dump.
+
+## Operating the Railway service
+
+`pg-backup-cron` lives in the Distribute.you project, deploys from `main`, and is
+configured with `dockerfilePath = Dockerfile.backup`, `cronSchedule = 0 3 * * *`,
+`restartPolicyType = NEVER`.
+
+Two Railway details that cost time if you do not know them:
+
+- **A cron run does NOT create a new deployment.** Railway re-runs the container
+  of the existing deployment on schedule, so polling the deployments list for a
+  new row waits forever. Read `deploymentLogs` on the current deployment id, or
+  read `_runs/latest.json` from R2.
+- **There is no `DOCKERFILE` value in Railway's `Builder` enum.** Setting
+  `dockerfilePath` on the service instance is what selects the Dockerfile;
+  leave `builder` alone. Sending `builder: "DOCKERFILE"` fails the whole
+  mutation with an opaque `Problem processing request`.
+
+To force a run for testing, set `cronSchedule` to something imminent, wait for
+the container to start, then **put the daily schedule back** — a `*/5` schedule
+left in place starts a second run on top of the one still dumping.
+
 ## Configuration
 
 | Variable | Default | Meaning |

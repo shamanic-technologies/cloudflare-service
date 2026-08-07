@@ -46,6 +46,30 @@ export async function decryptKey(
 }
 
 /**
+ * List every platform-key provider name. No identity headers required.
+ * Used by the backup job to discover which databases to dump without any
+ * hardcoded list.
+ */
+export async function listPlatformKeys(): Promise<string[]> {
+  const response = await fetch(`${KEY_SERVICE_URL}/platform-keys`, {
+    headers: {
+      ...(KEY_SERVICE_API_KEY ? { "X-Api-Key": KEY_SERVICE_API_KEY } : {}),
+      "X-Caller-Service": "cloudflare-storage",
+      "X-Caller-Method": "GET",
+      "X-Caller-Path": "/platform-keys",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to list platform keys: ${response.status} ${error}`);
+  }
+
+  const data = (await response.json()) as { keys: { provider: string }[] };
+  return data.keys.map((k) => k.provider);
+}
+
+/**
  * Resolve a decrypted PLATFORM key (global, no org/user). Used by internal
  * service callers that have no org/user/run identity. Hits key-service's
  * GET /keys/platform/{provider}/decrypt — costSource is always "platform".

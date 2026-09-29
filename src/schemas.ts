@@ -285,3 +285,81 @@ registry.registerPath({
     },
   },
 });
+
+// --- Verified-bot traffic (staff-only, Cloudflare GraphQL) ---
+
+const BotTrafficDaySchema = z.object({
+  date: z.string().openapi({ example: "2026-09-28" }),
+  captured: z.boolean().openapi({
+    description: "false = no capture for this day (before capture started, outside Cloudflare's ~31-day retention, or not final yet). requests is then null, never 0.",
+  }),
+  requests: z.record(z.number().int()).nullable().openapi({
+    description: "Requests per verified-bot category for the day (every listed category present, 0 when none).",
+    example: { "AI Assistant": 14, "AI Search": 165, "AI Crawler": 58 },
+  }),
+});
+
+export const BotTrafficDailyResponseSchema = z.object({
+  host: z.string().openapi({ example: "distribute.you" }),
+  from: z.string(),
+  to: z.string(),
+  categories: z.array(z.string()).openapi({
+    description: "AI Assistant, AI Search, AI Crawler first, then other verified-bot categories by volume.",
+  }),
+  days: z.array(BotTrafficDaySchema),
+  totals: z.array(z.object({
+    category: z.string(),
+    requests: z.number().int(),
+    topBots: z.array(z.object({
+      botName: z.string().openapi({ example: "ChatGPT-User" }),
+      requests: z.number().int(),
+    })),
+  })),
+}).openapi("BotTrafficDailyResponse");
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/bot-traffic/daily",
+  summary: "Daily verified-bot traffic on distribute.you, by category and top bots",
+  description:
+    "Staff-only. Cloudflare verified-bot requests on the distribute.you host, captured daily (hourly scheduler, a day is final once captured after 02:00 UTC the next day). 'AI Assistant' = fetched live to answer a user's question (ChatGPT-User, Claude-User, DuckAssistBot, Perplexity-User), 'AI Search' = AI search index, 'AI Crawler' = model training. Default window: the 30 days ending yesterday (UTC).",
+  security: [{ [ApiKeyHeader.name]: [] }],
+  request: {
+    query: z.object({
+      from: z.string().optional().openapi({ description: "First UTC day, YYYY-MM-DD (default: to - 29)" }),
+      to: z.string().optional().openapi({ description: "Last UTC day, YYYY-MM-DD (default: yesterday)" }),
+      categories: z.string().optional().openapi({ description: "Comma-separated category filter", example: "AI Assistant,AI Search,AI Crawler" }),
+      topBots: z.string().optional().openapi({ description: "Top bots per category (0-50, default 10)" }),
+    }),
+  },
+  responses: {
+    200: { description: "Daily series", content: { "application/json": { schema: BotTrafficDailyResponseSchema } } },
+    400: { description: "Invalid query", content: { "application/json": { schema: ErrorResponseSchema } } },
+  },
+});
+
+export const BotTrafficCaptureResultSchema = z.object({
+  status: z.enum(["ran", "skipped"]),
+  reason: z.string().optional(),
+  captured: z.array(z.object({ day: z.string(), rows: z.number().int(), requests: z.number().int() })),
+  failed: z.array(z.object({ day: z.string(), error: z.string() })),
+}).openapi("BotTrafficCaptureResult");
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/bot-traffic/capture",
+  summary: "Run the verified-bot capture now (staff-only)",
+  description:
+    "Runs the same mutex-guarded capture as the hourly scheduler. Without body: captures every day still missing or not final. With days: re-captures those days (within Cloudflare's retention); a day is replaced, never added to.",
+  security: [{ [ApiKeyHeader.name]: [] }],
+  request: {
+    body: {
+      required: false,
+      content: { "application/json": { schema: z.object({ days: z.array(z.string()).optional().openapi({ example: ["2026-09-28"] }) }) } },
+    },
+  },
+  responses: {
+    200: { description: "Capture result", content: { "application/json": { schema: BotTrafficCaptureResultSchema } } },
+    502: { description: "At least one day failed", content: { "application/json": { schema: BotTrafficCaptureResultSchema } } },
+  },
+});

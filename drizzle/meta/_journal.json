@@ -8,6 +8,13 @@
       "when": 1782364708270,
       "tag": "0000_lame_spirit",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790683169175,
+      "tag": "0001_bot_traffic",
+      "breakpoints": true
     }
   ]
 }

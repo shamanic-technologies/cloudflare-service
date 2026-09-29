@@ -204,6 +204,168 @@
           "orgId",
           "createdAt"
         ]
+      },
+      "BotTrafficDailyResponse": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "example": "distribute.you"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "AI Assistant, AI Search, AI Crawler first, then other verified-bot categories by volume."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "example": "2026-09-28"
+                },
+                "captured": {
+                  "type": "boolean",
+                  "description": "false = no capture for this day (before capture started, outside Cloudflare's ~31-day retention, or not final yet). requests is then null, never 0."
+                },
+                "requests": {
+                  "type": "object",
+                  "nullable": true,
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "description": "Requests per verified-bot category for the day (every listed category present, 0 when none).",
+                  "example": {
+                    "AI Assistant": 14,
+                    "AI Search": 165,
+                    "AI Crawler": 58
+                  }
+                }
+              },
+              "required": [
+                "date",
+                "captured",
+                "requests"
+              ]
+            }
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "type": "string"
+                },
+                "requests": {
+                  "type": "integer"
+                },
+                "topBots": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "botName": {
+                        "type": "string",
+                        "example": "ChatGPT-User"
+                      },
+                      "requests": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "botName",
+                      "requests"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "category",
+                "requests",
+                "topBots"
+              ]
+            }
+          }
+        },
+        "required": [
+          "host",
+          "from",
+          "to",
+          "categories",
+          "days",
+          "totals"
+        ]
+      },
+      "BotTrafficCaptureResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ran",
+              "skipped"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "captured": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "rows": {
+                  "type": "integer"
+                },
+                "requests": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "day",
+                "rows",
+                "requests"
+              ]
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "day",
+                "error"
+              ]
+            }
+          }
+        },
+        "required": [
+          "status",
+          "captured",
+          "failed"
+        ]
       }
     },
     "parameters": {}
@@ -832,6 +994,132 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/bot-traffic/daily": {
+      "get": {
+        "summary": "Daily verified-bot traffic on distribute.you, by category and top bots",
+        "description": "Staff-only. Cloudflare verified-bot requests on the distribute.you host, captured daily (hourly scheduler, a day is final once captured after 02:00 UTC the next day). 'AI Assistant' = fetched live to answer a user's question (ChatGPT-User, Claude-User, DuckAssistBot, Perplexity-User), 'AI Search' = AI search index, 'AI Crawler' = model training. Default window: the 30 days ending yesterday (UTC).",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "First UTC day, YYYY-MM-DD (default: to - 29)"
+            },
+            "required": false,
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Last UTC day, YYYY-MM-DD (default: yesterday)"
+            },
+            "required": false,
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated category filter",
+              "example": "AI Assistant,AI Search,AI Crawler"
+            },
+            "required": false,
+            "name": "categories",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Top bots per category (0-50, default 10)"
+            },
+            "required": false,
+            "name": "topBots",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotTrafficDailyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/bot-traffic/capture": {
+      "post": {
+        "summary": "Run the verified-bot capture now (staff-only)",
+        "description": "Runs the same mutex-guarded capture as the hourly scheduler. Without body: captures every day still missing or not final. With days: re-captures those days (within Cloudflare's retention); a day is replaced, never added to.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "days": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "example": [
+                      "2026-09-28"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Capture result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotTrafficCaptureResult"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "At least one day failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotTrafficCaptureResult"
                 }
               }
             }

@@ -167,9 +167,42 @@ describe("GET /images/*key", () => {
       .set(authHeaders);
 
     expect(res.status).toBe(402);
-    expect(res.body.error).toBe("Insufficient credit balance");
+    expect(res.body).toEqual({
+      error: "Insufficient credit balance",
+      reason: "balance=0.0000 required=0.000072",
+    });
     expect(mockGetFromR2).not.toHaveBeenCalled();
     expect(declareActualCost).not.toHaveBeenCalled();
+    expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("platform refused for a sales funnel MAX BUDGET: 402 names the cap, passes reason + sales_funnel_cap verbatim", async () => {
+    const cap = {
+        salesFunnelId: "sf-1",
+        salesFunnelCampaignId: "sfc-1",
+        amountCents: 5000,
+        period: "monthly",
+        consumedCents: 5000,
+        reservedCents: 0,
+      };
+    vi.mocked(authorizeCustomerBalance).mockResolvedValue({
+      sufficient: false,
+      balance_cents: "9000.0000",
+      required_cents: "0.000072",
+      reason: "sales_funnel_max_budget_reached",
+      sales_funnel_cap: cap,
+    });
+
+    const app = createApp();
+    const res = await request(app)
+      .get("/images/brands/uuid/logo.png")
+      .set(authHeaders);
+
+    expect(res.status).toBe(402);
+    expect(res.body.error).toBe("Sales funnel max budget reached");
+    expect(res.body.reason).toBe("sales_funnel_max_budget_reached");
+    expect(res.body.sales_funnel_cap).toEqual(cap);
+    expect(mockGetFromR2).not.toHaveBeenCalled();
     expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
   });
 

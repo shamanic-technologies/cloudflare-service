@@ -204,10 +204,75 @@ describe("POST /upload", () => {
     });
 
     expect(res.status).toBe(402);
-    expect(res.body.error).toBe("Insufficient credit balance");
+    expect(res.body).toEqual({
+      error: "Insufficient credit balance",
+      reason: "balance=0.0000 required=0.0009",
+    });
     expect(uploadToR2).not.toHaveBeenCalled();
     expect(declareActualCost).not.toHaveBeenCalled();
     expect(updateRun).toHaveBeenCalledWith("run-child-123", "failed", expect.any(Object));
+  });
+
+  it("platform refused for a sales funnel MAX BUDGET: 402 names the cap, passes reason + sales_funnel_cap verbatim", async () => {
+    const cap = {
+        salesFunnelId: "sf-1",
+        salesFunnelCampaignId: "sfc-1",
+        amountCents: 5000,
+        period: "monthly",
+        consumedCents: 5000,
+        reservedCents: 0,
+      };
+    vi.mocked(authorizeCustomerBalance).mockResolvedValue({
+      sufficient: false,
+      balance_cents: "9000.0000",
+      required_cents: "0.0009",
+      reason: "sales_funnel_max_budget_reached",
+      sales_funnel_cap: cap,
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue(mockFetchResponse()) as never;
+
+    const app = createApp();
+    const res = await request(app).post("/upload").set(authHeaders).send({
+      sourceUrl: "https://example.com/video.mp4",
+    });
+
+    expect(res.status).toBe(402);
+    expect(res.body.error).toBe("Sales funnel max budget reached");
+    expect(res.body.error).not.toMatch(/insufficient/i);
+    expect(res.body.reason).toBe("sales_funnel_max_budget_reached");
+    expect(res.body.sales_funnel_cap).toEqual(cap);
+    expect(uploadToR2).not.toHaveBeenCalled();
+    expect(declareActualCost).not.toHaveBeenCalled();
+  });
+
+  it("/upload/base64 refused for a sales funnel MAX BUDGET: 402 carries reason + sales_funnel_cap", async () => {
+    const cap = {
+        salesFunnelId: "sf-1",
+        salesFunnelCampaignId: "sfc-1",
+        amountCents: 5000,
+        period: "monthly",
+        consumedCents: 5000,
+        reservedCents: 0,
+      };
+    vi.mocked(authorizeCustomerBalance).mockResolvedValue({
+      sufficient: false,
+      balance_cents: "9000.0000",
+      required_cents: "0.0009",
+      reason: "sales_funnel_max_budget_unreadable",
+      sales_funnel_cap: cap,
+    });
+
+    const app = createApp();
+    const res = await request(app)
+      .post("/upload/base64")
+      .set(authHeaders)
+      .send({ contentBase64: Buffer.from("x").toString("base64"), contentType: "image/png" });
+
+    expect(res.status).toBe(402);
+    expect(res.body.error).toBe("Sales funnel max budget could not be read");
+    expect(res.body.reason).toBe("sales_funnel_max_budget_unreadable");
+    expect(res.body.sales_funnel_cap).toEqual(cap);
+    expect(uploadToR2).not.toHaveBeenCalled();
   });
 
   it("platform billing non-2xx: returns 502, no R2 PUT, no cost row, run failed", async () => {

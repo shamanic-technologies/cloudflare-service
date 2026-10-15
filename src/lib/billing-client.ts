@@ -13,11 +13,8 @@ export interface AuthorizeItem {
   quantity: number;
 }
 
-export interface AuthorizeResponse {
-  sufficient: boolean;
-  balance_cents: string;
-  required_cents: string;
-}
+import type { AuthorizeResponse } from "./credit-refusal.js";
+export type { AuthorizeResponse, SalesFunnelCap } from "./credit-refusal.js";
 
 export interface AuthorizeArgs {
   orgId: string;

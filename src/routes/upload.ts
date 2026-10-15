@@ -12,6 +12,7 @@ import {
   declarePlatformActualCost,
 } from "../lib/runs-client.js";
 import { authorizeCustomerBalance } from "../lib/billing-client.js";
+import { creditRefusalBody } from "../lib/credit-refusal.js";
 import { uploadToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
 import { optimizeImageForEmail, EmailOptimizeError } from "../lib/email-image.js";
@@ -186,12 +187,9 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
 
       if (!authz.sufficient) {
         console.warn(
-          `${logPrefix} Insufficient balance — balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
+          `${logPrefix} Authorize refused — reason=${authz.reason ?? "insufficient_balance"} balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
         );
-        res.status(402).json({
-          error: "Insufficient credit balance",
-          reason: `balance=${authz.balance_cents} required=${authz.required_cents}`,
-        });
+        res.status(402).json(creditRefusalBody(authz));
         await updateRun(childRun.id, "failed", identity);
         return;
       }
@@ -393,12 +391,9 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
 
       if (!authz.sufficient) {
         console.warn(
-          `${logPrefix} Insufficient balance — balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
+          `${logPrefix} Authorize refused — reason=${authz.reason ?? "insufficient_balance"} balance_cents=${authz.balance_cents} required_cents=${authz.required_cents}`
         );
-        res.status(402).json({
-          error: "Insufficient credit balance",
-          reason: `balance=${authz.balance_cents} required=${authz.required_cents}`,
-        });
+        res.status(402).json(creditRefusalBody(authz));
         await updateRun(childRun.id, "failed", identity);
         return;
       }

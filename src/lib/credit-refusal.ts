@@ -35,7 +35,7 @@ export function creditRefusalBody(authz: AuthorizeResponse): Record<string, unkn
   return {
     error:
       authz.reason === "sales_funnel_max_budget_unreadable"
-        ? "Sales funnel max budget could not be read"
+        ? "Sales funnel max budget unreadable"
         : "Sales funnel max budget reached",
     reason: authz.reason,
     ...(authz.sales_funnel_cap ? { sales_funnel_cap: authz.sales_funnel_cap } : {}),

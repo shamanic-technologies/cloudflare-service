@@ -269,7 +269,7 @@ describe("POST /upload", () => {
       .send({ contentBase64: Buffer.from("x").toString("base64"), contentType: "image/png" });
 
     expect(res.status).toBe(402);
-    expect(res.body.error).toBe("Sales funnel max budget could not be read");
+    expect(res.body.error).toBe("Sales funnel max budget unreadable");
     expect(res.body.reason).toBe("sales_funnel_max_budget_unreadable");
     expect(res.body.sales_funnel_cap).toEqual(cap);
     expect(uploadToR2).not.toHaveBeenCalled();

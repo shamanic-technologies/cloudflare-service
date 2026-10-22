@@ -12,6 +12,7 @@ import { traceEvent } from "../lib/trace-event.js";
 import { extractForwardHeaders } from "../lib/forward-headers.js";
 import type { AuthenticatedRequest } from "../types.js";
 import type { Response } from "express";
+import { errorReason } from "../lib/pg-error.js";
 
 const router = Router();
 
@@ -216,11 +217,11 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
     );
     await updateRun(childRun.id, "completed", identity);
   } catch (err) {
-    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:error", level: "error", detail: err instanceof Error ? err.message : String(err) }, req.headers);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "get-image:error", level: "error", detail: errorReason(err) }, req.headers);
     await updateRun(childRun.id, "failed", identity).catch(() => {});
     res.status(502).json({
       error: "Image processing failed",
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorReason(err),
     });
   }
 });

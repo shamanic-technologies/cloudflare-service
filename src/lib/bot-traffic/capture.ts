@@ -11,6 +11,7 @@ import {
   type BotTrafficGroup,
 } from "./cloudflare-graphql.js";
 import { daysNeedingCapture, earliestCapturableDay, isCapturable } from "./days.js";
+import { errorReason } from "../pg-error.js";
 
 export const BOT_TRAFFIC_ZONE = process.env.BOT_TRAFFIC_ZONE || "distribute.you";
 export const BOT_TRAFFIC_HOST = process.env.BOT_TRAFFIC_HOST || "distribute.you";
@@ -144,7 +145,7 @@ export async function runBotTrafficCapture(opts: { now?: Date; forceDays?: strin
         const r = await captureDay(token, day);
         result.captured.push({ day, rows: r.rows, requests: r.requests });
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
+        const error = errorReason(err);
         result.failed.push({ day, error });
         Sentry.captureException(err, { tags: { job: "bot-traffic-capture", day } });
       }

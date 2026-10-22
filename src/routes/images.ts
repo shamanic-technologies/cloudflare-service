@@ -1,5 +1,6 @@
 import { Router } from "express";
 import sharp from "sharp";
+import type { FitEnum } from "sharp";
 import { serviceAuth } from "../middleware/auth.js";
 import { decryptKey } from "../lib/key-client.js";
 import { createRun, updateRun, declareActualCost } from "../lib/runs-client.js";
@@ -77,7 +78,7 @@ router.get("/images/*", serviceAuth, async (req, res: Response) => {
     const width = parsePositiveInt(req.query.w as string | undefined, MAX_DIMENSION);
     const height = parsePositiveInt(req.query.h as string | undefined, MAX_DIMENSION);
     const fitParam = req.query.fit as string | undefined;
-    const fit = fitParam && ALLOWED_FIT.has(fitParam) ? fitParam as keyof sharp.FitEnum : undefined;
+    const fit = fitParam && ALLOWED_FIT.has(fitParam) ? fitParam as keyof FitEnum : undefined;
     const formatParam = req.query.format as string | undefined;
     const format = formatParam && ALLOWED_FORMAT.has(formatParam) ? formatParam : undefined;
     const quality = parseQuality(req.query.quality as string | undefined);

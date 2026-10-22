@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import type { Metadata, OutputInfo } from "sharp";
 
 /**
  * Email-targeted image optimisation.
@@ -76,7 +77,7 @@ export async function optimizeImageForEmail(
   filename: string,
   sourceContentType: string
 ): Promise<OptimizedImage> {
-  let metadata: sharp.Metadata;
+  let metadata: Metadata;
   try {
     metadata = await sharp(source).metadata();
   } catch (err) {
@@ -121,7 +122,7 @@ export async function optimizeImageForEmail(
       ? pipeline.png({ compressionLevel: 9, palette: true, quality: PNG_QUALITY, effort: 7 })
       : pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true, chromaSubsampling: "4:2:0" });
 
-  let encoded: { data: Buffer; info: sharp.OutputInfo };
+  let encoded: { data: Buffer; info: OutputInfo };
   try {
     encoded = await pipeline.toBuffer({ resolveWithObject: true });
   } catch (err) {

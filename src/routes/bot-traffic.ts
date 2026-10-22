@@ -5,6 +5,7 @@ import { db } from "../db/index.js";
 import { botTrafficCaptures, botTrafficDaily } from "../db/schema.js";
 import { BOT_TRAFFIC_HOST, runBotTrafficCapture } from "../lib/bot-traffic/capture.js";
 import { addDays, toDay } from "../lib/bot-traffic/days.js";
+import { pgDriverError } from "../lib/pg-error.js";
 
 /**
  * Staff-only reads of verified-bot traffic (Cloudflare) on distribute.you.
@@ -127,7 +128,7 @@ router.get("/internal/bot-traffic/daily", async (req, res) => {
     });
   } catch (err) {
     console.error("[bot-traffic] daily read failed:", err);
-    res.status(500).json({ error: "Failed to read bot traffic", reason: String(err) });
+    res.status(500).json({ error: "Failed to read bot traffic", reason: String(pgDriverError(err)) });
   }
 });
 

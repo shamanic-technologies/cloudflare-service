@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@aws-sdk/client-s3", () => {
   const send = vi.fn().mockResolvedValue({});
-  const S3Client = vi.fn().mockImplementation(() => ({ send }));
+  // A `function`, not an arrow: vitest 4 calls the implementation with `new`.
+  const S3Client = vi.fn().mockImplementation(function () {
+    return { send };
+  });
   const PutObjectCommand = vi.fn();
   const DeleteObjectCommand = vi.fn();
   const GetObjectCommand = vi.fn();

@@ -21,7 +21,7 @@
     "@aws-sdk/lib-storage": "^3.700.0",
     "@sentry/node": "^8.45.0",
     "drizzle-orm": "^0.38.0",
-    "express": "^4.21.0",
+    "express": "^4.22.3",
     "postgres": "^3.4.5",
     "sharp": "^0.34.5",
     "zod": "^3.24.0"
@@ -34,9 +34,23 @@
     "supertest": "^7.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ],
+    "overrides": {
+      "form-data@>=4.0.0 <4.0.6": "^4.0.6",
+      "nanoid@<3.3.18": "^3.3.18",
+      "path-to-regexp@<0.1.13": "0.1.13",
+      "postcss@<8.5.23": "^8.5.23",
+      "proxy-addr@<2.0.8": "^2.0.8",
+      "source-map-js@<1.2.2": "^1.2.2",
+      "shell-quote@<1.9.0": "^1.9.0",
+      "fast-xml-builder@<1.1.7": "^1.1.7"
+    }
   }
 }

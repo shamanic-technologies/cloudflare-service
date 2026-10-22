@@ -11,6 +11,7 @@ import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest } from "../types.js";
 import type { Response } from "express";
+import { errorReason } from "../lib/pg-error.js";
 
 const router = Router();
 
@@ -136,11 +137,11 @@ router.delete("/files/:id", serviceAuth, async (req, res: Response) => {
     await updateRun(childRun.id, "completed", { orgId, userId });
     res.status(204).send();
   } catch (err) {
-    traceEvent(childRun.id, { service: "cloudflare-service", event: "delete-file:error", level: "error", detail: err instanceof Error ? err.message : String(err) }, req.headers);
+    traceEvent(childRun.id, { service: "cloudflare-service", event: "delete-file:error", level: "error", detail: errorReason(err) }, req.headers);
     await updateRun(childRun.id, "failed", { orgId, userId }).catch(() => {});
     res.status(502).json({
       error: "Delete failed",
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorReason(err),
     });
   }
 });

@@ -23,6 +23,7 @@ import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
 import type { AuthenticatedRequest, PlatformRequest } from "../types.js";
 import type { Response } from "express";
+import { errorReason } from "../lib/pg-error.js";
 
 const router = Router();
 const UPLOAD_COST_NAME = "cloudflare-r2-class-a-operation";
@@ -66,7 +67,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       forwardHeaders
     );
   } catch (err) {
-    console.error(`${logPrefix} Failed to create run: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`${logPrefix} Failed to create run: ${errorReason(err)}`);
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
@@ -259,7 +260,7 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
       ...optimizeResponseFields(optimizeFor, optimized),
     });
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg = errorReason(err);
     const errStack = err instanceof Error ? err.stack : undefined;
     console.error(`${logPrefix} Upload failed — sourceUrl=${sourceUrl}, error=${errMsg}`, errStack ? `\n${errStack}` : "");
     traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:error", level: "error", detail: errMsg }, req.headers);
@@ -289,7 +290,7 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
       forwardHeaders
     );
   } catch (err) {
-    console.error(`${logPrefix} Failed to create run: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`${logPrefix} Failed to create run: ${errorReason(err)}`);
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
@@ -460,7 +461,7 @@ router.post("/upload/base64", serviceAuth, async (req, res: Response) => {
       ...optimizeResponseFields(optimizeFor, optimized),
     });
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg = errorReason(err);
     const errStack = err instanceof Error ? err.stack : undefined;
     console.error(`${logPrefix} Upload failed — error=${errMsg}`, errStack ? `\n${errStack}` : "");
     traceEvent(childRun.id, { service: "cloudflare-service", event: "upload-base64:error", level: "error", detail: errMsg }, req.headers);
@@ -496,7 +497,7 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
       forwardHeaders
     );
   } catch (err) {
-    console.error(`${logPrefix} Failed to create platform run: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`${logPrefix} Failed to create platform run: ${errorReason(err)}`);
     res.status(502).json({ error: "Failed to create run", reason: String(err) });
     return;
   }
@@ -620,7 +621,7 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
       ...optimizeResponseFields(optimizeFor, optimized),
     });
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    const errMsg = errorReason(err);
     const errStack = err instanceof Error ? err.stack : undefined;
     console.error(`${logPrefix} Upload failed — error=${errMsg}`, errStack ? `\n${errStack}` : "");
     traceEvent(platformRun.id, { service: "cloudflare-service", event: "internal-upload-base64:error", level: "error", detail: errMsg }, req.headers);

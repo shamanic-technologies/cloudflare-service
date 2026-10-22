@@ -8,6 +8,7 @@ import { pruneDatabaseBackups } from "./retention.js";
 import type { PruneResult } from "./retention.js";
 import { getFromR2, listR2Objects, uploadStreamToR2 } from "../lib/r2-client.js";
 import type { R2Config } from "../lib/r2-client.js";
+import { errorReason } from "../lib/pg-error.js";
 
 /** R2-safe timestamp: 2026-08-07T031500Z (sortable, no colons). */
 export function backupStamp(now: Date): string {
@@ -187,7 +188,7 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
       );
       outcomes.push({ database: target.name, status: "ok", manifest, prune });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorReason(error);
       console.error(`[pg-backup] ${target.name}: FAILED — ${message}`);
       outcomes.push({ database: target.name, status: "failed", error: message });
     }

@@ -110,12 +110,22 @@ export async function declareActualCost(
 const SERVICE_NAME = "cloudflare-storage";
 
 /**
- * Create a platform-level run (no org/user/run identity). Auth is X-Api-Key +
+ * Whose work a platform run is (cost ledger): the caller's run it is made for
+ * (the new run becomes its child and rides its outcome or support mark), or the
+ * support function it serves when no run stands behind it. Never both.
+ */
+export type PlatformRunOwnership =
+  | { parentRunId: string; support?: undefined }
+  | { support: { kind: string; reason: string }; parentRunId?: undefined };
+
+/**
+ * Create a platform-level run (no org/user identity). Auth is X-Api-Key +
  * x-service-name. There is no affordability authorize for platform spend.
  */
 export async function createPlatformRun(
   task: { serviceName: string; taskName: string },
-  forwardHeaders?: Record<string, string>
+  forwardHeaders?: Record<string, string>,
+  ownership?: PlatformRunOwnership
 ): Promise<CreateRunResult> {
   const response = await fetch(`${RUNS_SERVICE_URL}/v1/platform-runs`, {
     method: "POST",
@@ -128,6 +138,8 @@ export async function createPlatformRun(
     body: JSON.stringify({
       serviceName: task.serviceName,
       taskName: task.taskName,
+      ...(ownership?.parentRunId ? { parentRunId: ownership.parentRunId } : {}),
+      ...(ownership?.support ? { support: ownership.support } : {}),
     }),
   });
 

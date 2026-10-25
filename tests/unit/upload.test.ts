@@ -689,7 +689,8 @@ describe("POST /internal/upload/base64", () => {
     });
     expect(createPlatformRun).toHaveBeenCalledWith(
       { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
-      {}
+      {},
+      undefined
     );
     expect(decryptPlatformKey).toHaveBeenCalledTimes(5);
     expect(authorizeCustomerBalance).not.toHaveBeenCalled();
@@ -718,6 +719,76 @@ describe("POST /internal/upload/base64", () => {
         sourceUrl: null,
       })
     );
+  });
+
+  it("creates the platform run as a child of the caller's x-run-id", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+        "x-run-id": "11111111-1111-1111-1111-111111111111",
+      })
+      .send({ contentBase64: Buffer.from("img").toString("base64"), contentType: "image/png" });
+
+    expect(res.status).toBe(200);
+    expect(createPlatformRun).toHaveBeenCalledWith(
+      { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
+      {},
+      { parentRunId: "11111111-1111-1111-1111-111111111111" }
+    );
+  });
+
+  it("marks the platform run with the support function the caller states", async () => {
+    const app = createApp();
+    const support = { kind: "product_feature", reason: "investor-update composer image" };
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({ "X-Api-Key": "test-api-key", "x-service-name": "api-service" })
+      .send({ contentBase64: Buffer.from("img").toString("base64"), contentType: "image/png", support });
+
+    expect(res.status).toBe(200);
+    expect(createPlatformRun).toHaveBeenCalledWith(
+      { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
+      {},
+      { support }
+    );
+  });
+
+  it("refuses x-run-id and support together before creating any run", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({
+        "X-Api-Key": "test-api-key",
+        "x-service-name": "chat-service",
+        "x-run-id": "11111111-1111-1111-1111-111111111111",
+      })
+      .send({
+        contentBase64: Buffer.from("img").toString("base64"),
+        support: { kind: "platform_llm", reason: "x" },
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toContain("never both");
+    expect(createPlatformRun).not.toHaveBeenCalled();
+    expect(uploadToR2).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown support function before creating any run", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post("/internal/upload/base64")
+      .set({ "X-Api-Key": "test-api-key", "x-service-name": "api-service" })
+      .send({
+        contentBase64: Buffer.from("img").toString("base64"),
+        support: { kind: "unattributed_production", reason: "x" },
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toContain("support must be {kind, reason}");
+    expect(createPlatformRun).not.toHaveBeenCalled();
   });
 
   it("rejects calls missing x-service-name", async () => {

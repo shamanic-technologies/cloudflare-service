@@ -35,6 +35,10 @@ const platformHeaders = {
   "x-workflow-slug": z.string().optional().openapi({ description: "Optional workflow attribution" }),
   "x-feature-slug": z.string().optional().openapi({ description: "Optional feature attribution" }),
   "x-audience-id": z.string().optional().openapi({ description: "Optional audience attribution" }),
+  "x-run-id": z.string().uuid().optional().openapi({
+    description:
+      "The caller's run this upload is made for. The upload's platform run is created as its child, so its cost rides that run (its outcome or its support mark). Send x-run-id OR body support, never both.",
+  }),
 };
 
 // --- Health ---
@@ -87,6 +91,31 @@ export const UploadBase64RequestSchema = z.object({
   contentType: z.string().optional().openapi({ description: "MIME type" }),
   optimizeFor: optimizeForField,
 }).openapi("UploadBase64Request");
+
+// Support functions (runs-service SUPPORT_FUNCTIONS minus unattributed_production:
+// a stored file is never unpooled production work).
+export const SUPPORT_FUNCTIONS = [
+  "payment_fees",
+  "brand_setup",
+  "copilot",
+  "platform_llm",
+  "staff_experiment",
+  "product_feature",
+  "retired_product",
+] as const;
+
+export const PlatformUploadBase64RequestSchema = UploadBase64RequestSchema.extend({
+  support: z
+    .object({
+      kind: z.enum(SUPPORT_FUNCTIONS),
+      reason: z.string().min(1).max(2000),
+    })
+    .optional()
+    .openapi({
+      description:
+        "The support function this upload serves when no caller run stands behind it (e.g. staff investor-update images: product_feature). The platform run is marked support at creation, its cost reported apart. Send x-run-id OR support, never both.",
+    }),
+}).openapi("PlatformUploadBase64Request");
 
 export const UploadResponseSchema = z.object({
   id: z.string().uuid().openapi({ description: "File record UUID" }),
@@ -169,12 +198,13 @@ registry.registerPath({
   method: "post",
   path: "/internal/upload/base64",
   summary: "Upload platform base64 content to R2",
-  description: "Decodes base64 file content from an internal service caller and uploads it to Cloudflare R2 without org, user, or parent run identity.",
+  description:
+    "Decodes base64 file content from an internal service caller and uploads it to Cloudflare R2 without org or user identity. Say whose work the upload is: x-run-id (the caller's run, the upload's run becomes its child) or body support {kind, reason} (no run stands behind it). Neither still uploads, but its spend stays undeclared on the cost ledger.",
   security: [{ [ApiKeyHeader.name]: [] }],
   request: {
     headers: z.object(platformHeaders),
     body: {
-      content: { "application/json": { schema: UploadBase64RequestSchema } },
+      content: { "application/json": { schema: PlatformUploadBase64RequestSchema } },
     },
   },
   responses: {
@@ -183,7 +213,7 @@ registry.registerPath({
       content: { "application/json": { schema: UploadResponseSchema } },
     },
     400: {
-      description: "Invalid request or missing x-service-name",
+      description: "Invalid request, missing x-service-name, or both x-run-id and support sent",
       content: { "application/json": { schema: ErrorResponseSchema } },
     },
     401: {

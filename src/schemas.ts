@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { extendZodWithOpenApi, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
+import "./lib/zod-v3-messages.js";
 
 extendZodWithOpenApi(z);
 export const registry = new OpenAPIRegistry();
@@ -323,7 +324,7 @@ const BotTrafficDaySchema = z.object({
   captured: z.boolean().openapi({
     description: "false = no capture for this day (before capture started, outside Cloudflare's ~31-day retention, or not final yet). requests is then null, never 0.",
   }),
-  requests: z.record(z.number().int()).nullable().openapi({
+  requests: z.record(z.string(), z.number().int()).nullable().openapi({
     description: "Requests per verified-bot category for the day (every listed category present, 0 when none).",
     example: { "AI Assistant": 14, "AI Search": 165, "AI Crawler": 58 },
   }),

@@ -16,7 +16,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.0",
+    "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@aws-sdk/client-s3": "^3.1156.0",
     "@aws-sdk/lib-storage": "^3.1156.0",
     "@sentry/node": "^10.76.2",
@@ -24,7 +24,7 @@
     "express": "^4.22.3",
     "postgres": "^3.4.5",
     "sharp": "^0.35.5",
-    "zod": "^3.24.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
@@ -54,7 +54,8 @@
       "qs@<6.16.0": "^6.16.1",
       "@esbuild-kit/core-utils>esbuild": "^0.25.12",
       "@opentelemetry/api": "~1.9.1",
-      "esbuild@>=0.27.0 <0.28.1": "^0.28.1"
+      "esbuild@>=0.27.0 <0.28.1": "^0.28.1",
+      "body-parser@<1.20.9": "^1.20.9"
     }
   }
 }

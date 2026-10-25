@@ -444,6 +444,7 @@
               "description": "Internal org UUID"
             },
             "required": true,
+            "description": "Internal org UUID",
             "name": "x-org-id",
             "in": "header"
           },
@@ -454,6 +455,7 @@
               "description": "Internal user UUID"
             },
             "required": true,
+            "description": "Internal user UUID",
             "name": "x-user-id",
             "in": "header"
           },
@@ -463,6 +465,7 @@
               "description": "Run ID from runs-service"
             },
             "required": true,
+            "description": "Run ID from runs-service",
             "name": "x-run-id",
             "in": "header"
           },
@@ -473,6 +476,7 @@
               "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
             },
             "required": false,
+            "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
             "name": "x-brand-id",
             "in": "header"
           }
@@ -537,6 +541,7 @@
               "description": "Internal org UUID"
             },
             "required": true,
+            "description": "Internal org UUID",
             "name": "x-org-id",
             "in": "header"
           },
@@ -547,6 +552,7 @@
               "description": "Internal user UUID"
             },
             "required": true,
+            "description": "Internal user UUID",
             "name": "x-user-id",
             "in": "header"
           },
@@ -556,6 +562,7 @@
               "description": "Run ID from runs-service"
             },
             "required": true,
+            "description": "Run ID from runs-service",
             "name": "x-run-id",
             "in": "header"
           },
@@ -566,6 +573,7 @@
               "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
             },
             "required": false,
+            "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
             "name": "x-brand-id",
             "in": "header"
           }
@@ -630,6 +638,7 @@
               "example": "chat-service"
             },
             "required": true,
+            "description": "Internal caller service name",
             "name": "x-service-name",
             "in": "header"
           },
@@ -639,6 +648,7 @@
               "description": "Optional campaign attribution"
             },
             "required": false,
+            "description": "Optional campaign attribution",
             "name": "x-campaign-id",
             "in": "header"
           },
@@ -649,6 +659,7 @@
               "example": "00000000-0000-0000-0000-000000000001"
             },
             "required": false,
+            "description": "Optional comma-separated brand attribution",
             "name": "x-brand-id",
             "in": "header"
           },
@@ -658,6 +669,7 @@
               "description": "Optional workflow attribution"
             },
             "required": false,
+            "description": "Optional workflow attribution",
             "name": "x-workflow-slug",
             "in": "header"
           },
@@ -667,6 +679,7 @@
               "description": "Optional feature attribution"
             },
             "required": false,
+            "description": "Optional feature attribution",
             "name": "x-feature-slug",
             "in": "header"
           },
@@ -676,6 +689,7 @@
               "description": "Optional audience attribution"
             },
             "required": false,
+            "description": "Optional audience attribution",
             "name": "x-audience-id",
             "in": "header"
           },
@@ -686,6 +700,7 @@
               "description": "The caller's run this upload is made for. The upload's platform run is created as its child, so its cost rides that run (its outcome or its support mark). Send x-run-id OR body support, never both."
             },
             "required": false,
+            "description": "The caller's run this upload is made for. The upload's platform run is created as its child, so its cost rides that run (its outcome or its support mark). Send x-run-id OR body support, never both.",
             "name": "x-run-id",
             "in": "header"
           }
@@ -768,6 +783,7 @@
               "description": "Internal org UUID"
             },
             "required": true,
+            "description": "Internal org UUID",
             "name": "x-org-id",
             "in": "header"
           },
@@ -778,6 +794,7 @@
               "description": "Internal user UUID"
             },
             "required": true,
+            "description": "Internal user UUID",
             "name": "x-user-id",
             "in": "header"
           },
@@ -787,6 +804,7 @@
               "description": "Run ID from runs-service"
             },
             "required": true,
+            "description": "Run ID from runs-service",
             "name": "x-run-id",
             "in": "header"
           },
@@ -797,6 +815,7 @@
               "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
             },
             "required": false,
+            "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
             "name": "x-brand-id",
             "in": "header"
           }
@@ -848,6 +867,7 @@
               "description": "Internal org UUID"
             },
             "required": true,
+            "description": "Internal org UUID",
             "name": "x-org-id",
             "in": "header"
           },
@@ -858,6 +878,7 @@
               "description": "Internal user UUID"
             },
             "required": true,
+            "description": "Internal user UUID",
             "name": "x-user-id",
             "in": "header"
           },
@@ -867,6 +888,7 @@
               "description": "Run ID from runs-service"
             },
             "required": true,
+            "description": "Run ID from runs-service",
             "name": "x-run-id",
             "in": "header"
           },
@@ -877,6 +899,7 @@
               "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
             },
             "required": false,
+            "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
             "name": "x-brand-id",
             "in": "header"
           }
@@ -914,6 +937,7 @@
               "description": "R2 object key (full path)"
             },
             "required": true,
+            "description": "R2 object key (full path)",
             "name": "key",
             "in": "path"
           },
@@ -923,6 +947,7 @@
               "description": "Max width in pixels (1-4096)"
             },
             "required": false,
+            "description": "Max width in pixels (1-4096)",
             "name": "w",
             "in": "query"
           },
@@ -932,6 +957,7 @@
               "description": "Max height in pixels (1-4096)"
             },
             "required": false,
+            "description": "Max height in pixels (1-4096)",
             "name": "h",
             "in": "query"
           },
@@ -948,6 +974,7 @@
               "description": "Resize fit mode"
             },
             "required": false,
+            "description": "Resize fit mode",
             "name": "fit",
             "in": "query"
           },
@@ -963,6 +990,7 @@
               "description": "Output format"
             },
             "required": false,
+            "description": "Output format",
             "name": "format",
             "in": "query"
           },
@@ -972,6 +1000,7 @@
               "description": "Output quality (1-100)"
             },
             "required": false,
+            "description": "Output quality (1-100)",
             "name": "quality",
             "in": "query"
           },
@@ -982,6 +1011,7 @@
               "description": "Internal org UUID"
             },
             "required": true,
+            "description": "Internal org UUID",
             "name": "x-org-id",
             "in": "header"
           },
@@ -992,6 +1022,7 @@
               "description": "Internal user UUID"
             },
             "required": true,
+            "description": "Internal user UUID",
             "name": "x-user-id",
             "in": "header"
           },
@@ -1001,6 +1032,7 @@
               "description": "Run ID from runs-service"
             },
             "required": true,
+            "description": "Run ID from runs-service",
             "name": "x-run-id",
             "in": "header"
           },
@@ -1011,6 +1043,7 @@
               "example": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
             },
             "required": false,
+            "description": "Comma-separated list of brand UUIDs (e.g. uuid1,uuid2,uuid3)",
             "name": "x-brand-id",
             "in": "header"
           }
@@ -1066,6 +1099,7 @@
               "description": "First UTC day, YYYY-MM-DD (default: to - 29)"
             },
             "required": false,
+            "description": "First UTC day, YYYY-MM-DD (default: to - 29)",
             "name": "from",
             "in": "query"
           },
@@ -1075,6 +1109,7 @@
               "description": "Last UTC day, YYYY-MM-DD (default: yesterday)"
             },
             "required": false,
+            "description": "Last UTC day, YYYY-MM-DD (default: yesterday)",
             "name": "to",
             "in": "query"
           },
@@ -1085,6 +1120,7 @@
               "example": "AI Assistant,AI Search,AI Crawler"
             },
             "required": false,
+            "description": "Comma-separated category filter",
             "name": "categories",
             "in": "query"
           },
@@ -1094,6 +1130,7 @@
               "description": "Top bots per category (0-50, default 10)"
             },
             "required": false,
+            "description": "Top bots per category (0-50, default 10)",
             "name": "topBots",
             "in": "query"
           }

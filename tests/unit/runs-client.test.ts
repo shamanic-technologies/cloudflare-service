@@ -178,6 +178,22 @@ describe("runs-client", () => {
     });
   });
 
+  it("createPlatformRun states the parent run or the support function in the body", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ id: "platform-run-123" }),
+    }) as never;
+
+    const { createPlatformRun } = await import("../../src/lib/runs-client.js");
+    const task = { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" };
+    await createPlatformRun(task, {}, { parentRunId: "11111111-1111-1111-1111-111111111111" });
+    await createPlatformRun(task, {}, { support: { kind: "product_feature", reason: "r" } });
+
+    const bodies = vi.mocked(globalThis.fetch).mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(bodies[0]).toEqual({ ...task, parentRunId: "11111111-1111-1111-1111-111111111111" });
+    expect(bodies[1]).toEqual({ ...task, support: { kind: "product_feature", reason: "r" } });
+  });
+
   it("declarePlatformActualCost POSTs /v1/platform-runs/:id/costs as actual platform spend", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

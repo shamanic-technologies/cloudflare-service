@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { serviceAuth, platformAuth } from "../middleware/auth.js";
-import { UploadBase64RequestSchema, UploadRequestSchema } from "../schemas.js";
+import { PlatformUploadBase64RequestSchema, UploadBase64RequestSchema, UploadRequestSchema } from "../schemas.js";
 import { decryptKey, decryptPlatformKey } from "../lib/key-client.js";
 import {
   createRun,
@@ -490,11 +490,36 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
 
   const forwardHeaders = extractForwardHeaders(req.headers);
 
+  // Whose work this upload is (cost ledger): the caller's run, or a support
+  // function. Checked before any run exists so a refusal leaves nothing behind.
+  const parsedSupport = PlatformUploadBase64RequestSchema.shape.support.safeParse(req.body?.support);
+  if (!parsedSupport.success) {
+    res.status(400).json({
+      error: "Invalid request body",
+      reason: `support must be {kind, reason}, kind one of the support functions: ${parsedSupport.error.issues.map((i) => i.message).join(", ")}`,
+    });
+    return;
+  }
+  const support = parsedSupport.data;
+  const callerRunId = req.headers["x-run-id"] as string | undefined;
+  if (callerRunId && support) {
+    res.status(400).json({
+      error: "Invalid request body",
+      reason: "Send x-run-id OR support, never both: an upload made for a caller run is that run's work",
+    });
+    return;
+  }
+  const ownership = callerRunId ? { parentRunId: callerRunId } : support ? { support } : undefined;
+  if (!ownership) {
+    console.warn(`${logPrefix} No x-run-id and no support: this upload's spend stays undeclared on the cost ledger`);
+  }
+
   let platformRun: { id: string };
   try {
     platformRun = await createPlatformRun(
       { serviceName: "cloudflare-storage", taskName: "upload-base64-platform" },
-      forwardHeaders
+      forwardHeaders,
+      ownership
     );
   } catch (err) {
     console.error(`${logPrefix} Failed to create platform run: ${errorReason(err)}`);
@@ -503,7 +528,7 @@ router.post("/internal/upload/base64", platformAuth, async (req, res: Response) 
   }
 
   try {
-    const parseResult = UploadBase64RequestSchema.safeParse(req.body);
+    const parseResult = PlatformUploadBase64RequestSchema.safeParse(req.body);
     if (!parseResult.success) {
       const reason = parseResult.error.issues.map((i) => i.message).join(", ");
       console.warn(`${logPrefix} Invalid request body: ${reason}`);

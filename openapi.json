@@ -159,6 +159,45 @@
           "contentBase64"
         ]
       },
+      "PlatformUploadBase64Request": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UploadBase64Request"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "support": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "payment_fees",
+                      "brand_setup",
+                      "copilot",
+                      "platform_llm",
+                      "staff_experiment",
+                      "product_feature",
+                      "retired_product"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "kind",
+                  "reason"
+                ],
+                "description": "The support function this upload serves when no caller run stands behind it (e.g. staff investor-update images: product_feature). The platform run is marked support at creation, its cost reported apart. Send x-run-id OR support, never both."
+              }
+            }
+          }
+        ]
+      },
       "FileResponse": {
         "type": "object",
         "properties": {
@@ -577,7 +616,7 @@
     "/internal/upload/base64": {
       "post": {
         "summary": "Upload platform base64 content to R2",
-        "description": "Decodes base64 file content from an internal service caller and uploads it to Cloudflare R2 without org, user, or parent run identity.",
+        "description": "Decodes base64 file content from an internal service caller and uploads it to Cloudflare R2 without org or user identity. Say whose work the upload is: x-run-id (the caller's run, the upload's run becomes its child) or body support {kind, reason} (no run stands behind it). Neither still uploads, but its spend stays undeclared on the cost ledger.",
         "security": [
           {
             "ApiKeyAuth": []
@@ -639,13 +678,23 @@
             "required": false,
             "name": "x-audience-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The caller's run this upload is made for. The upload's platform run is created as its child, so its cost rides that run (its outcome or its support mark). Send x-run-id OR body support, never both."
+            },
+            "required": false,
+            "name": "x-run-id",
+            "in": "header"
           }
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UploadBase64Request"
+                "$ref": "#/components/schemas/PlatformUploadBase64Request"
               }
             }
           }
@@ -662,7 +711,7 @@
             }
           },
           "400": {
-            "description": "Invalid request or missing x-service-name",
+            "description": "Invalid request, missing x-service-name, or both x-run-id and support sent",
             "content": {
               "application/json": {
                 "schema": {

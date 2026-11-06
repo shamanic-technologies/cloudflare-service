@@ -74,17 +74,35 @@ function collect(stream: NodeJS.ReadableStream, limitBytes = 64 * 1024): { read:
   return { read: () => buffer };
 }
 
-function exitCodeOf(child: ChildProcess): Promise<number> {
+interface ChildExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+function exitOf(child: ChildProcess): Promise<ChildExit> {
   return new Promise((resolve, reject) => {
     child.on("error", reject);
-    child.on("close", (code, signal) => {
-      if (code === null) {
-        reject(new Error(`${child.spawnfile} terminated by signal ${signal}`));
-        return;
-      }
-      resolve(code);
-    });
+    child.on("close", (code, signal) => resolve({ code, signal }));
   });
+}
+
+function describeExit(exit: ChildExit): string {
+  return exit.code === null ? `signal ${exit.signal}` : `exit ${exit.code}`;
+}
+
+/**
+ * A dump that never finishes is worse than one that fails: pg_dump holds an
+ * ACCESS SHARE lock on every table of the database for its whole life, so the
+ * service's next ALTER TABLE queues behind it (BACKUP-HANG-1106, 2026-11-03:
+ * 3.5 days on lead_service, then a 40-min lead-service outage). Every dump is
+ * therefore ended — pg_dump killed, which closes its connection and releases
+ * the locks — when either limit trips.
+ */
+export class DumpTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DumpTimeoutError";
+  }
 }
 
 export interface DumpOptions {
@@ -93,6 +111,14 @@ export interface DumpOptions {
   queueSize?: number;
   /** Injected for tests; production uses the real clock. */
   now?: () => Date;
+  /** No byte out of pg_dump for this long ends the dump (a stall). */
+  stallTimeoutMs: number;
+  /** Total wall-clock budget for this one dump. */
+  deadlineMs: number;
+  /** Passed to pg_dump --lock-wait-timeout. */
+  lockWaitTimeoutMs: number;
+  /** Aborted by the caller (the whole run's budget ran out). */
+  signal?: AbortSignal;
 }
 
 export async function dumpDatabaseToR2(
@@ -103,7 +129,7 @@ export async function dumpDatabaseToR2(
     r2Key: string;
     tocKey: string;
   },
-  options: DumpOptions = {}
+  options: DumpOptions
 ): Promise<DumpManifest> {
   const spawn = options.spawnFn ?? nodeSpawn;
   const now = options.now ?? (() => new Date());
@@ -112,7 +138,14 @@ export async function dumpDatabaseToR2(
 
   const dump = spawn(
     "pg_dump",
-    ["--format=custom", "--no-owner", "--no-privileges", "--dbname", params.dsn],
+    [
+      "--format=custom",
+      "--no-owner",
+      "--no-privileges",
+      `--lock-wait-timeout=${options.lockWaitTimeoutMs}`,
+      "--dbname",
+      params.dsn,
+    ],
     { stdio: ["ignore", "pipe", "pipe"] }
   );
 
@@ -126,12 +159,55 @@ export async function dumpDatabaseToR2(
 
   const hash = createHash("sha256");
   let bytes = 0;
+  let lastByteMs = Date.now();
   dump.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
+    lastByteMs = Date.now();
     hash.update(chunk);
   });
 
   const uploadBody = new PassThrough();
+  const uploadAbort = new AbortController();
+
+  // First limit to trip wins; the dump and its listing are killed (closing the
+  // database connection), the upload is aborted (no partial object left in R2).
+  let timeoutError: DumpTimeoutError | null = null;
+  const end = (message: string) => {
+    if (timeoutError) return;
+    timeoutError = new DumpTimeoutError(message);
+    dump.kill("SIGKILL");
+    list.kill("SIGKILL");
+    uploadAbort.abort(timeoutError);
+    // No error object here: the reason is reported once, by the throw below.
+    uploadBody.destroy();
+  };
+
+  const tickMs = Math.max(
+    10,
+    Math.min(5_000, Math.floor(Math.min(options.stallTimeoutMs, options.deadlineMs) / 5))
+  );
+  const watchdog = setInterval(() => {
+    const nowMs = Date.now();
+    if (nowMs - lastByteMs >= options.stallTimeoutMs) {
+      end(
+        `pg_dump of "${params.database}" stalled: no byte for ${Math.round(
+          (nowMs - lastByteMs) / 1000
+        )}s after ${bytes} bytes (stall limit ${Math.round(options.stallTimeoutMs / 1000)}s); ` +
+          `dump ended, its table locks released`
+      );
+    } else if (nowMs - startMs >= options.deadlineMs) {
+      end(
+        `pg_dump of "${params.database}" exceeded its ${Math.round(
+          options.deadlineMs / 1000
+        )}s budget after ${bytes} bytes; dump ended, its table locks released`
+      );
+    }
+  }, tickMs);
+
+  const onRunAbort = () =>
+    end(`pg_dump of "${params.database}" ended: the run's time budget ran out`);
+  if (options.signal?.aborted) onRunAbort();
+  options.signal?.addEventListener("abort", onRunAbort, { once: true });
   dump.stdout.pipe(uploadBody);
 
   // The listing branch is best-effort on the PLUMBING but not on the RESULT:
@@ -158,21 +234,42 @@ export async function dumpDatabaseToR2(
     params.r2Key,
     uploadBody,
     "application/octet-stream",
-    { partSizeBytes: options.partSizeBytes, queueSize: options.queueSize }
+    {
+      partSizeBytes: options.partSizeBytes,
+      queueSize: options.queueSize,
+      signal: uploadAbort.signal,
+    }
   );
 
-  const [dumpCode, listCode, uploadResult] = await Promise.all([
-    exitCodeOf(dump),
-    exitCodeOf(list),
-    uploadPromise.then(
-      (url) => ({ ok: true as const, url }),
-      (err: unknown) => ({ ok: false as const, err })
-    ),
-  ]);
+  let dumpExit: ChildExit;
+  let listExit: ChildExit;
+  let uploadResult: { ok: true; url: string } | { ok: false; err: unknown };
+  try {
+    [dumpExit, listExit, uploadResult] = await Promise.all([
+      exitOf(dump),
+      exitOf(list),
+      uploadPromise.then(
+        (url) => ({ ok: true as const, url }),
+        (err: unknown) => ({ ok: false as const, err })
+      ),
+    ]);
+  } finally {
+    clearInterval(watchdog);
+    options.signal?.removeEventListener("abort", onRunAbort);
+  }
 
-  if (dumpCode !== 0) {
+  if (timeoutError) {
+    const stderr = dumpStderr.read().trim();
+    throw new DumpTimeoutError(
+      stderr ? `${(timeoutError as Error).message} — pg_dump stderr: ${stderr}` : (timeoutError as Error).message
+    );
+  }
+
+  if (dumpExit.code !== 0) {
     throw new Error(
-      `pg_dump failed for "${params.database}" (exit ${dumpCode}): ${dumpStderr.read().trim()}`
+      `pg_dump failed for "${params.database}" (${describeExit(dumpExit)}): ${dumpStderr
+        .read()
+        .trim()}`
     );
   }
   if (!uploadResult.ok) {
@@ -182,9 +279,11 @@ export async function dumpDatabaseToR2(
       }`
     );
   }
-  if (listCode !== 0) {
+  if (listExit.code !== 0) {
     throw new Error(
-      `pg_restore --list rejected the dump of "${params.database}" (exit ${listCode}): ${listStderr
+      `pg_restore --list rejected the dump of "${params.database}" (${describeExit(
+        listExit
+      )}): ${listStderr
         .read()
         .trim()}`
     );

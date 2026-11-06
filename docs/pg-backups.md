@@ -5,9 +5,10 @@ copy of every fleet database on Cloudflare R2 every day, so that corruption
 noticed two days later is still recoverable, and so that losing access to the
 Neon account is not the same thing as losing the data.
 
-It runs as a **second Railway service on this repo** (`pg-backup-cron`), built
-from `Dockerfile.backup` and started with `node dist/backup/index.js`. The
-always-on HTTP service is untouched; the two only share library code.
+It runs on the Hetzner box as a one-shot container (`pg-backup`, same image as
+this service, started with `npm run start:backup`), launched by the host cron
+`/root/distribute/backup-cron.sh` at **03:00 and 15:00 UTC**. The always-on HTTP
+service is untouched; the two only share library code.
 
 ## What one run does
 
@@ -23,6 +24,27 @@ For every configured database, sequentially:
    **rejected**. A small archive is not automatically wrong (an empty database
    really does dump to ~885 bytes) — an archive that lost every table is.
 4. Backups past the retention window are pruned, never below `BACKUP_MIN_KEEP`.
+
+## Time limits: a dump never holds a database for days
+
+`pg_dump` holds an ACCESS SHARE lock on every table of its database for its
+whole life, so a dump that stalls blocks every schema change of that service.
+On 2026-11-03 one stalled for 3.5 days on lead_service (the upload stopped
+reading, pg_dump sat blocked writing); the next `ALTER TABLE` timed out and
+lead-service answered 503 for ~40 min (BACKUP-HANG-1106). Now:
+
+| Limit | Default | Source |
+|---|---|---|
+| Stall: no byte out of pg_dump | 5 min (`BACKUP_STALL_TIMEOUT_SECONDS`) | pgBackRest `io-timeout` (60 s) ends a silent stream; ours sits above two R2 socket timeouts so the SDK retry fires first |
+| One database | 60 min (`BACKUP_DB_TIMEOUT_MINUTES`) | pgBackRest `db-timeout` 30 min; our slowest dump (runs-service, 2.5 GB) takes 8-15 min |
+| Whole run | 6 h (`BACKUP_RUN_TIMEOUT_MINUTES`) | Sentry `maxRuntime`; half the 12 h between runs, so runs never overlap |
+| Lock wait | 120 s (`BACKUP_LOCK_WAIT_TIMEOUT_SECONDS`) | pg_dump `--lock-wait-timeout` |
+| R2 socket silent | 2 min | AWS SDK v3 has NO default socket timeout |
+
+A tripped limit kills pg_dump (its connection closes, its locks go), aborts the
+upload, records the database as FAILED, and the run moves to the next one. A
+database reached after the run's budget is spent is FAILED too, never skipped.
+The process itself exits 10 min after the run budget whatever hangs.
 
 A database that fails does not stop the others. Every failure is logged, sent to
 Sentry, written into the run summary, and makes the process exit non-zero.
@@ -41,7 +63,7 @@ pg-backups/_runs/latest.json                 # same, always the most recent run
 
 ## Adding or removing a database — no code change, no redeploy
 
-The database list is **not in the code and not in Railway variables**. Each
+The database list is **not in the code and not in env variables**. Each
 database is a key-service platform key named `pg-backup-dsn-<name>` whose value
 is the connection string:
 
@@ -67,22 +89,24 @@ is therefore a key-service change only.
 | `BACKUP_RETENTION_DAYS` | `30` | age past which a backup is pruned |
 | `BACKUP_MIN_KEEP` | `7` | newest backups never pruned, whatever their age |
 | `BACKUP_MONITOR_SLUG` | `pg-backup-daily` | Sentry cron monitor slug |
-| `BACKUP_CRON_SCHEDULE` | `0 3 * * *` | schedule declared to Sentry; must match the Railway cron |
+| `BACKUP_CRON_SCHEDULE` | `0 3 * * *` | schedule declared to Sentry |
+| `BACKUP_*_TIMEOUT_*` | see Time limits | |
 
-No database credential and no R2 credential is ever a Railway variable.
+No database credential and no R2 credential is ever an env variable.
 
-## Alerting
+## Alerting: red on dashboard v2 Monitoring
 
-The job opens a Sentry cron monitor check-in before it starts and closes it with
-`ok` or `error`. That covers both failure modes:
+The run prints one `[pg-backup] RESULT {json}` line. `backup-cron.sh` posts it
+as the box check `pg-backup` (features-service `/internal/box-checks/runs`),
+drawn on **Monitoring > Box > Watchdogs**: red when any database got no backup
+(the failed ones and their errors are in the details), and red on its own when
+no run reported for 3x the 12 h cadence. No email.
 
-- a run that **fails** → `error` check-in plus one `captureException` per
-  database, and a non-zero exit that Railway records as a failed cron;
-- a run that **never happened** → Sentry raises a missed check-in against
-  `BACKUP_CRON_SCHEDULE`.
+The Sentry cron check-in stays as a second trace. It did not surface the
+2026-11-03 hang: the monitor had been `error` on every run since 2026-10-30 (3
+databases failing every time) and nobody reads Sentry.
 
-`pg-backups/_runs/latest.json` is the equivalent signal readable straight from
-R2: if its `startedAt` is not from today, no backup ran.
+`pg-backups/_runs/latest.json` is the same verdict readable straight from R2.
 
 ## Verifying a backup without restoring it
 

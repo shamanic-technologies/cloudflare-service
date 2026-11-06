@@ -24,6 +24,8 @@ const R2 = {
   publicDomain: "cdn.test",
 };
 
+const LIMITS = { stallTimeoutMs: 60_000, deadlineMs: 600_000, lockWaitTimeoutMs: 120_000 };
+
 const LISTING = [
   ";",
   "; Archive created at 2026-08-07 03:00:00 UTC",
@@ -96,11 +98,12 @@ describe("dumpDatabaseToR2", () => {
         r2Key: "pg-backups/runs-service/2026-08-07T030000Z.dump",
         tocKey: "pg-backups/runs-service/2026-08-07T030000Z.toc.txt",
       },
-      { spawnFn }
+      { spawnFn, ...LIMITS }
     );
 
     expect(calls[0].file).toBe("pg_dump");
     expect(calls[0].args).toContain("--format=custom");
+    expect(calls[0].args).toContain("--lock-wait-timeout=120000");
     expect(calls[1]).toEqual({ file: "pg_restore", args: ["--list"] });
 
     expect(manifest.bytes).toBe(payload.length);
@@ -125,7 +128,7 @@ describe("dumpDatabaseToR2", () => {
           r2Key: "k.dump",
           tocKey: "k.toc.txt",
         },
-        { spawnFn }
+        { spawnFn, ...LIMITS }
       )
     ).rejects.toThrow(/pg_dump failed for "runs-service" \(exit 1\): connection refused/);
 
@@ -144,7 +147,7 @@ describe("dumpDatabaseToR2", () => {
           r2Key: "k.dump",
           tocKey: "k.toc.txt",
         },
-        { spawnFn }
+        { spawnFn, ...LIMITS }
       )
     ).rejects.toThrow(/pg_restore --list rejected the dump/);
   });

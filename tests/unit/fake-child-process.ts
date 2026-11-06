@@ -18,7 +18,23 @@ export class FakeChild extends EventEmitter {
     this.stdin.resume();
   }
 
+  killedWith: string | null = null;
+  private closed = false;
+
+  /** Like a real kill: the process dies, its pipes close, "close" reports the signal. */
+  kill(signal: string = "SIGTERM"): boolean {
+    if (this.closed) return false;
+    this.closed = true;
+    this.killedWith = signal;
+    this.stdout.end();
+    this.stderr.end();
+    setImmediate(() => this.emit("close", null, signal));
+    return true;
+  }
+
   finish(code: number): void {
+    if (this.closed) return;
+    this.closed = true;
     this.stdout.end();
     this.stderr.end();
     setImmediate(() => this.emit("close", code, null));

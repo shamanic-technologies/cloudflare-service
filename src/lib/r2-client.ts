@@ -24,6 +24,11 @@ function createS3Client(config: R2Config): S3Client {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
     },
+    // The SDK's default is NO socket timeout: a request whose connection goes
+    // silent waits forever (BACKUP-HANG-1106: a backup upload that stopped
+    // reading held pg_dump, and its table locks, for 3.5 days). A silent socket
+    // now errors after 2 min and the SDK's standard retry takes over.
+    requestHandler: { connectionTimeout: 30_000, requestTimeout: 120_000 },
   });
 }
 
@@ -58,7 +63,7 @@ export async function uploadStreamToR2(
   key: string,
   body: Readable,
   contentType?: string,
-  options?: { partSizeBytes?: number; queueSize?: number }
+  options?: { partSizeBytes?: number; queueSize?: number; signal?: AbortSignal }
 ): Promise<string> {
   const s3 = createS3Client(config);
 
@@ -75,7 +80,15 @@ export async function uploadStreamToR2(
     leavePartsOnError: false,
   });
 
-  await upload.done();
+  const signal = options?.signal;
+  const onAbort = () => void upload.abort();
+  if (signal?.aborted) onAbort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    await upload.done();
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
 
   const domain = config.publicDomain.replace(/^https?:\/\//, "");
   return `https://${domain}/${key}`;

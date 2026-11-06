@@ -147,9 +147,22 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
 
   const outcomes: DatabaseOutcome[] = [];
 
+  // The whole run has one budget; each dump gets the smaller of its own budget
+  // and what is left of the run's. A database reached after the run's budget
+  // is spent is recorded as FAILED (never silently skipped): it got no backup.
+  const runDeadlineMs = Date.now() + settings.runTimeoutMinutes * 60_000;
+
   for (const target of targets) {
     const base = `${settings.r2Prefix}/${target.name}/${stamp}`;
     const manifestKey = `${base}.manifest.json`;
+
+    const remainingMs = runDeadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      const message = `not dumped: the run's ${settings.runTimeoutMinutes} min budget ran out before this database`;
+      console.error(`[pg-backup] ${target.name}: FAILED — ${message}`);
+      outcomes.push({ database: target.name, status: "failed", error: message });
+      continue;
+    }
 
     try {
       console.log(`[pg-backup] ${target.name}: dumping`);
@@ -161,7 +174,13 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
           r2Key: `${base}.dump`,
           tocKey: `${base}.toc.txt`,
         },
-        { spawnFn, now }
+        {
+          spawnFn,
+          now,
+          stallTimeoutMs: settings.stallTimeoutSeconds * 1000,
+          deadlineMs: Math.min(settings.dbTimeoutMinutes * 60_000, remainingMs),
+          lockWaitTimeoutMs: settings.lockWaitTimeoutSeconds * 1000,
+        }
       );
 
       const previous = await readPreviousManifest(r2Config, {

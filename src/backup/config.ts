@@ -18,6 +18,31 @@ export const DEFAULT_MIN_KEEP = 7;
 export const DEFAULT_MONITOR_SLUG = "pg-backup-daily";
 export const DEFAULT_CRON_SCHEDULE = "0 3 * * *";
 
+/*
+ * Time limits (BACKUP-HANG-1106). A pg_dump holds an ACCESS SHARE lock on every
+ * table of its database for as long as it runs, so a dump that stalls blocks
+ * every schema change of that service. On 2026-11-03 one stalled for 3.5 days
+ * on lead_service and its next ALTER TABLE took lead-service down for ~40 min.
+ *
+ * - Stall: no byte out of pg_dump for 5 min ends the dump. pgBackRest ends a
+ *   backup whose stream is silent for `io-timeout` (default 60 s); our stream
+ *   also crosses the R2 multipart upload, whose own socket timeout (2 min, see
+ *   r2-client) must be able to fire and retry first, so the stall limit sits
+ *   above two of those.
+ * - Per database: 60 min. pgBackRest's `db-timeout` default is 30 min per
+ *   query; our slowest database (runs-service, 2.5 GB) takes 8-15 min, so 60 min
+ *   is 4x the worst run measured (2026-11-04..06), never hit by a healthy dump.
+ * - Whole run: 6 h, the same `maxRuntime` the Sentry monitor declares and half
+ *   the 12 h between the 03:00 and 15:00 UTC runs, so two runs never overlap.
+ *   A healthy run takes 33-77 min.
+ * - Lock wait: pg_dump `--lock-wait-timeout` (PostgreSQL docs) so a dump stuck
+ *   behind a migration fails instead of queueing every reader behind it.
+ */
+export const DEFAULT_STALL_TIMEOUT_SECONDS = 300;
+export const DEFAULT_DB_TIMEOUT_MINUTES = 60;
+export const DEFAULT_RUN_TIMEOUT_MINUTES = 360;
+export const DEFAULT_LOCK_WAIT_TIMEOUT_SECONDS = 120;
+
 export interface BackupSettings {
   dbKeyPrefix: string;
   r2Prefix: string;
@@ -25,6 +50,10 @@ export interface BackupSettings {
   minKeep: number;
   monitorSlug: string;
   cronSchedule: string;
+  stallTimeoutSeconds: number;
+  dbTimeoutMinutes: number;
+  runTimeoutMinutes: number;
+  lockWaitTimeoutSeconds: number;
 }
 
 function readInt(name: string, fallback: number): number {
@@ -37,6 +66,13 @@ function readInt(name: string, fallback: number): number {
   return parsed;
 }
 
+/** A time limit of 0 would mean "no limit", which is exactly the bug: refuse it. */
+function readPositiveInt(name: string, fallback: number): number {
+  const value = readInt(name, fallback);
+  if (value === 0) throw new Error(`${name} must be greater than 0`);
+  return value;
+}
+
 export function loadSettings(): BackupSettings {
   return {
     dbKeyPrefix: process.env.BACKUP_DB_KEY_PREFIX || DEFAULT_DB_KEY_PREFIX,
@@ -45,6 +81,13 @@ export function loadSettings(): BackupSettings {
     minKeep: readInt("BACKUP_MIN_KEEP", DEFAULT_MIN_KEEP),
     monitorSlug: process.env.BACKUP_MONITOR_SLUG || DEFAULT_MONITOR_SLUG,
     cronSchedule: process.env.BACKUP_CRON_SCHEDULE || DEFAULT_CRON_SCHEDULE,
+    stallTimeoutSeconds: readPositiveInt("BACKUP_STALL_TIMEOUT_SECONDS", DEFAULT_STALL_TIMEOUT_SECONDS),
+    dbTimeoutMinutes: readPositiveInt("BACKUP_DB_TIMEOUT_MINUTES", DEFAULT_DB_TIMEOUT_MINUTES),
+    runTimeoutMinutes: readPositiveInt("BACKUP_RUN_TIMEOUT_MINUTES", DEFAULT_RUN_TIMEOUT_MINUTES),
+    lockWaitTimeoutSeconds: readPositiveInt(
+      "BACKUP_LOCK_WAIT_TIMEOUT_SECONDS",
+      DEFAULT_LOCK_WAIT_TIMEOUT_SECONDS
+    ),
   };
 }
 

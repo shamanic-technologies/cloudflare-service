@@ -1,11 +1,15 @@
 import "../instrument.js";
 import * as Sentry from "@sentry/node";
 import { loadSettings } from "./config.js";
-import { runBackupJob } from "./run.js";
+import { runBackupJob, summaryLine } from "./run.js";
 
 /**
- * Entrypoint of the daily Postgres backup cron (a separate Railway service on
- * this same repo, started with `pnpm start:backup`).
+ * Entrypoint of the Postgres backup one-shot (`pnpm start:backup`), run on the
+ * box by `/root/distribute/backup-cron.sh` at 03:00 and 15:00 UTC.
+ *
+ * The box's Monitoring hub check (`pg-backup`, dashboard v2 Monitoring > Box >
+ * Watchdogs) reads the ONE `PG_BACKUP_SUMMARY {json}` line this prints at the
+ * end of every run that got as far as dumping: keep its shape (`summaryLine`).
  *
  * Alerting is a Sentry cron monitor check-in, which covers BOTH failure modes
  * that matter: a run that errors (status "error") and a run that never happened
@@ -24,7 +28,7 @@ async function main(): Promise<void> {
   const monitorConfig = {
     schedule: { type: "crontab" as const, value: settings.cronSchedule },
     checkinMargin: 60,
-    maxRuntime: 6 * 60,
+    maxRuntime: settings.runBudgetMinutes + 30,
     timezone: "Etc/UTC",
   };
 
@@ -59,6 +63,7 @@ async function main(): Promise<void> {
     monitorConfig
   );
 
+  console.log(summaryLine(summary));
   console.log(
     `[pg-backup] run ${summary.stamp} complete — ${summary.okCount} ok, ${summary.failedCount} failed`
   );

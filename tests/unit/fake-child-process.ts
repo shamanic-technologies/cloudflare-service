@@ -10,6 +10,11 @@ export class FakeChild extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
   spawnfile: string;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  /** Every signal sent, in order (a hung child ignores TERM until `ignoreTerm` is false). */
+  signals: string[] = [];
+  ignoreTerm = false;
 
   constructor(spawnfile: string) {
     super();
@@ -19,9 +24,22 @@ export class FakeChild extends EventEmitter {
   }
 
   finish(code: number): void {
+    if (this.exitCode !== null || this.signalCode !== null) return;
+    this.exitCode = code;
     this.stdout.end();
     this.stderr.end();
     setImmediate(() => this.emit("close", code, null));
+  }
+
+  kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    this.signals.push(signal);
+    if (this.exitCode !== null || this.signalCode !== null) return false;
+    if (signal === "SIGTERM" && this.ignoreTerm) return true;
+    this.signalCode = signal;
+    this.stdout.destroy();
+    this.stderr.destroy();
+    setImmediate(() => this.emit("close", null, signal));
+    return true;
   }
 }
 

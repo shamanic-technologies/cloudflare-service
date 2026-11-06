@@ -55,6 +55,9 @@ const SETTINGS = {
   minKeep: 7,
   monitorSlug: "pg-backup-daily",
   cronSchedule: "0 3 * * *",
+  stallMinutes: 10,
+  dbBudgetMinutes: 60,
+  runBudgetMinutes: 240,
 };
 
 const NOW = new Date("2026-08-07T03:00:00.000Z");

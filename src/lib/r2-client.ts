@@ -16,9 +16,24 @@ export interface R2Config {
   publicDomain: string;
 }
 
+/**
+ * Socket timeouts on every R2 call (BACKUP-HANG-1106). The SDK default is NO
+ * timeout: a part upload whose socket goes silent waits forever, stops reading
+ * the pg_dump pipe, and the dump's transaction then holds its read locks for
+ * days (lead_service, 2026-11-03 → 11-06). `requestTimeout` is the socket
+ * INACTIVITY limit (not a total), so a slow-but-moving 8 MB part is never cut;
+ * a timed-out request is retried by the SDK's standard retry strategy.
+ */
+export const R2_CONNECTION_TIMEOUT_MS = 30_000;
+export const R2_REQUEST_TIMEOUT_MS = 5 * 60_000;
+
 function createS3Client(config: R2Config): S3Client {
   return new S3Client({
     region: "auto",
+    requestHandler: {
+      connectionTimeout: R2_CONNECTION_TIMEOUT_MS,
+      requestTimeout: R2_REQUEST_TIMEOUT_MS,
+    },
     endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
     credentials: {
       accessKeyId: config.accessKeyId,
@@ -58,7 +73,7 @@ export async function uploadStreamToR2(
   key: string,
   body: Readable,
   contentType?: string,
-  options?: { partSizeBytes?: number; queueSize?: number }
+  options?: { partSizeBytes?: number; queueSize?: number; signal?: AbortSignal }
 ): Promise<string> {
   const s3 = createS3Client(config);
 
@@ -75,7 +90,18 @@ export async function uploadStreamToR2(
     leavePartsOnError: false,
   });
 
-  await upload.done();
+  // A caller that gave up (stalled dump, spent budget) aborts the multipart
+  // upload, so the promise settles and no orphan parts are left on R2.
+  const signal = options?.signal;
+  const onAbort = () => void upload.abort().catch(() => undefined);
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    await upload.done();
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
 
   const domain = config.publicDomain.replace(/^https?:\/\//, "");
   return `https://${domain}/${key}`;

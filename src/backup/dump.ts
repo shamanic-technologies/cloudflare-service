@@ -74,6 +74,35 @@ function collect(stream: NodeJS.ReadableStream, limitBytes = 64 * 1024): { read:
   return { read: () => buffer };
 }
 
+/**
+ * How long a dump may go without pg_dump producing a single byte, and how long
+ * it may run at all (BACKUP-HANG-1106). Both END the dump: pg_dump and
+ * pg_restore are killed (TERM, then KILL after `killGraceMs`), the R2 upload is
+ * aborted, and the dump fails with the reason. Killing pg_dump closes its
+ * connection, so the server ends the COPY and releases every lock the dump's
+ * transaction held.
+ *
+ * A dump stops producing bytes when ANY consumer stops reading (R2 socket,
+ * pg_restore): `pipe()` pauses pg_dump's stdout, which is exactly what held
+ * lead_service for 3.5 days.
+ */
+export const DEFAULT_STALL_MS = 10 * 60_000;
+export const DEFAULT_KILL_GRACE_MS = 30_000;
+
+/** Postgres-native guard: pg_dump never queues forever behind an exclusive lock. */
+export const PG_DUMP_LOCK_WAIT_TIMEOUT = "2min";
+
+export class DumpAbortedError extends Error {
+  constructor(
+    readonly database: string,
+    readonly kind: "stalled" | "over_budget",
+    message: string
+  ) {
+    super(message);
+    this.name = "DumpAbortedError";
+  }
+}
+
 function exitCodeOf(child: ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     child.on("error", reject);
@@ -93,6 +122,14 @@ export interface DumpOptions {
   queueSize?: number;
   /** Injected for tests; production uses the real clock. */
   now?: () => Date;
+  /** End the dump when pg_dump produced no byte for this long. */
+  stallMs?: number;
+  /** End the dump once it has run this long: the database's time budget. */
+  budgetMs?: number;
+  /** Between SIGTERM and SIGKILL when a dump is ended. */
+  killGraceMs?: number;
+  /** How often the stall/budget guard looks (tests shorten it). */
+  checkEveryMs?: number;
 }
 
 export async function dumpDatabaseToR2(
@@ -112,7 +149,14 @@ export async function dumpDatabaseToR2(
 
   const dump = spawn(
     "pg_dump",
-    ["--format=custom", "--no-owner", "--no-privileges", "--dbname", params.dsn],
+    [
+      "--format=custom",
+      "--no-owner",
+      "--no-privileges",
+      `--lock-wait-timeout=${PG_DUMP_LOCK_WAIT_TIMEOUT}`,
+      "--dbname",
+      params.dsn,
+    ],
     { stdio: ["ignore", "pipe", "pipe"] }
   );
 
@@ -126,8 +170,10 @@ export async function dumpDatabaseToR2(
 
   const hash = createHash("sha256");
   let bytes = 0;
+  let lastByteAt = Date.now();
   dump.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
+    lastByteAt = Date.now();
     hash.update(chunk);
   });
 
@@ -153,22 +199,77 @@ export async function dumpDatabaseToR2(
   listInput.pipe(list.stdin);
   dump.stdout.pipe(listInput);
 
+  const uploadAbort = new AbortController();
   const uploadPromise = uploadStreamToR2(
     params.r2Config,
     params.r2Key,
     uploadBody,
     "application/octet-stream",
-    { partSizeBytes: options.partSizeBytes, queueSize: options.queueSize }
+    {
+      partSizeBytes: options.partSizeBytes,
+      queueSize: options.queueSize,
+      signal: uploadAbort.signal,
+    }
   );
 
-  const [dumpCode, listCode, uploadResult] = await Promise.all([
+  // The guard: a dump that stops moving, or runs past its budget, is ENDED.
+  const stallMs = options.stallMs ?? DEFAULT_STALL_MS;
+  const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  let aborted: DumpAbortedError | null = null;
+  const end = (error: DumpAbortedError) => {
+    if (aborted) return;
+    aborted = error;
+    console.error(`[pg-backup] ${params.database}: ENDING DUMP — ${error.message}`);
+    for (const child of [dump, list]) child.kill("SIGTERM");
+    setTimeout(() => {
+      for (const child of [dump, list]) {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }
+    }, killGraceMs).unref();
+    uploadAbort.abort(error);
+    uploadBody.destroy(error);
+  };
+  const guard = setInterval(() => {
+    const nowMs = Date.now();
+    if (options.budgetMs !== undefined && nowMs - startMs >= options.budgetMs) {
+      end(
+        new DumpAbortedError(
+          params.database,
+          "over_budget",
+          `dump of "${params.database}" passed its time budget after ` +
+            `${Math.round((nowMs - startMs) / 1000)}s (${bytes} bytes written)`
+        )
+      );
+    } else if (nowMs - lastByteAt >= stallMs) {
+      end(
+        new DumpAbortedError(
+          params.database,
+          "stalled",
+          `dump of "${params.database}" stalled: no byte from pg_dump for ` +
+            `${Math.round((nowMs - lastByteAt) / 1000)}s (${bytes} bytes written)`
+        )
+      );
+    }
+  }, options.checkEveryMs ?? Math.min(30_000, Math.max(10, Math.floor(stallMs / 4))));
+  guard.unref();
+
+  const settled = await Promise.allSettled([
     exitCodeOf(dump),
     exitCodeOf(list),
-    uploadPromise.then(
-      (url) => ({ ok: true as const, url }),
-      (err: unknown) => ({ ok: false as const, err })
-    ),
-  ]);
+    uploadPromise,
+  ]).finally(() => clearInterval(guard));
+
+  if (aborted) throw aborted;
+
+  const [dumpSettled, listSettled, uploadSettled] = settled;
+  if (dumpSettled.status === "rejected") throw dumpSettled.reason;
+  if (listSettled.status === "rejected") throw listSettled.reason;
+  const dumpCode = dumpSettled.value;
+  const listCode = listSettled.value;
+  const uploadResult =
+    uploadSettled.status === "fulfilled"
+      ? { ok: true as const, url: uploadSettled.value }
+      : { ok: false as const, err: uploadSettled.reason as unknown };
 
   if (dumpCode !== 0) {
     throw new Error(

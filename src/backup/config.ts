@@ -16,7 +16,21 @@ export const DEFAULT_R2_PREFIX = "pg-backups";
 export const DEFAULT_RETENTION_DAYS = 30;
 export const DEFAULT_MIN_KEEP = 7;
 export const DEFAULT_MONITOR_SLUG = "pg-backup-daily";
-export const DEFAULT_CRON_SCHEDULE = "0 3 * * *";
+export const DEFAULT_CRON_SCHEDULE = "0 3,15 * * *";
+
+/**
+ * Time limits (BACKUP-HANG-1106). Sized on the measured box runs of 2026-11-01
+ * to 11-06: slowest single database 19 min (runs-service), slowest whole run
+ * 78 min, runs every 12 h.
+ * - stall: no byte from pg_dump for 10 min = a dead consumer, never a slow one
+ *   (an rsync `--timeout` / curl `--speed-time` style I/O-inactivity limit);
+ * - one database: 60 min, ~3x the slowest observed dump;
+ * - whole run: 4 h, well inside the 12 h between two scheduled runs, so two
+ *   runs never overlap (a Kubernetes Job `activeDeadlineSeconds` style cap).
+ */
+export const DEFAULT_STALL_MINUTES = 10;
+export const DEFAULT_DB_BUDGET_MINUTES = 60;
+export const DEFAULT_RUN_BUDGET_MINUTES = 240;
 
 export interface BackupSettings {
   dbKeyPrefix: string;
@@ -25,6 +39,9 @@ export interface BackupSettings {
   minKeep: number;
   monitorSlug: string;
   cronSchedule: string;
+  stallMinutes: number;
+  dbBudgetMinutes: number;
+  runBudgetMinutes: number;
 }
 
 function readInt(name: string, fallback: number): number {
@@ -37,6 +54,13 @@ function readInt(name: string, fallback: number): number {
   return parsed;
 }
 
+/** A limit of 0 would end every dump at once: refuse it loudly. */
+function readPositiveInt(name: string, fallback: number): number {
+  const value = readInt(name, fallback);
+  if (value === 0) throw new Error(`${name} must be a positive integer, got "0"`);
+  return value;
+}
+
 export function loadSettings(): BackupSettings {
   return {
     dbKeyPrefix: process.env.BACKUP_DB_KEY_PREFIX || DEFAULT_DB_KEY_PREFIX,
@@ -45,6 +69,9 @@ export function loadSettings(): BackupSettings {
     minKeep: readInt("BACKUP_MIN_KEEP", DEFAULT_MIN_KEEP),
     monitorSlug: process.env.BACKUP_MONITOR_SLUG || DEFAULT_MONITOR_SLUG,
     cronSchedule: process.env.BACKUP_CRON_SCHEDULE || DEFAULT_CRON_SCHEDULE,
+    stallMinutes: readPositiveInt("BACKUP_STALL_MINUTES", DEFAULT_STALL_MINUTES),
+    dbBudgetMinutes: readPositiveInt("BACKUP_DB_BUDGET_MINUTES", DEFAULT_DB_BUDGET_MINUTES),
+    runBudgetMinutes: readPositiveInt("BACKUP_RUN_BUDGET_MINUTES", DEFAULT_RUN_BUDGET_MINUTES),
   };
 }
 

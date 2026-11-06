@@ -115,6 +115,10 @@ export interface RunDeps {
   spawnFn?: SpawnFn;
   r2Config?: R2Config;
   targets?: BackupTarget[];
+  /** Wall clock for the time budgets (epoch ms); injected by tests. */
+  clockMs?: () => number;
+  /** Passed to each dump (tests shorten the guard's polling and kill grace). */
+  dumpGuard?: { checkEveryMs?: number; killGraceMs?: number; stallMs?: number };
 }
 
 /**
@@ -146,10 +150,22 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
   );
 
   const outcomes: DatabaseOutcome[] = [];
+  const clockMs = deps.clockMs ?? (() => Date.now());
+  const runDeadlineMs = clockMs() + settings.runBudgetMinutes * 60_000;
 
   for (const target of targets) {
     const base = `${settings.r2Prefix}/${target.name}/${stamp}`;
     const manifestKey = `${base}.manifest.json`;
+
+    // The run's budget is spent: every database left is reported failed, never
+    // silently skipped, and the run ends so the next scheduled one starts clean.
+    const startMs = clockMs();
+    if (startMs >= runDeadlineMs) {
+      const message = `not started: the run's ${settings.runBudgetMinutes} min budget was spent`;
+      console.error(`[pg-backup] ${target.name}: FAILED — ${message}`);
+      outcomes.push({ database: target.name, status: "failed", error: message });
+      continue;
+    }
 
     try {
       console.log(`[pg-backup] ${target.name}: dumping`);
@@ -161,7 +177,14 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
           r2Key: `${base}.dump`,
           tocKey: `${base}.toc.txt`,
         },
-        { spawnFn, now }
+        {
+          spawnFn,
+          now,
+          stallMs: deps.dumpGuard?.stallMs ?? settings.stallMinutes * 60_000,
+          budgetMs: Math.min(settings.dbBudgetMinutes * 60_000, runDeadlineMs - startMs),
+          checkEveryMs: deps.dumpGuard?.checkEveryMs,
+          killGraceMs: deps.dumpGuard?.killGraceMs,
+        }
       );
 
       const previous = await readPreviousManifest(r2Config, {
@@ -212,4 +235,30 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
   await putJson(r2Config, `${settings.r2Prefix}/_runs/latest.json`, summary);
 
   return summary;
+}
+
+/**
+ * One machine-readable line per run, read by the box's `pg-backup` Monitoring
+ * check: which databases dumped and which failed, with why. No DSN, no bytes
+ * of data: names, counts, timings and the error text only.
+ */
+export function summaryLine(summary: RunSummary): string {
+  return `PG_BACKUP_SUMMARY ${JSON.stringify({
+    stamp: summary.stamp,
+    startedAt: summary.startedAt,
+    finishedAt: summary.finishedAt,
+    okCount: summary.okCount,
+    failedCount: summary.failedCount,
+    failed: summary.databases
+      .filter((outcome) => outcome.status === "failed")
+      .map((outcome) => ({ database: outcome.database, error: (outcome.error ?? "").slice(0, 300) })),
+    slowest: summary.databases
+      .filter((outcome) => outcome.manifest)
+      .map((outcome) => ({
+        database: outcome.database,
+        seconds: Math.round((outcome.manifest?.durationMs ?? 0) / 1000),
+      }))
+      .sort((a, b) => b.seconds - a.seconds)
+      .slice(0, 3),
+  })}`;
 }

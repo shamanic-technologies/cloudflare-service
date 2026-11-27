@@ -45,7 +45,6 @@ const R2 = {
   secretAccessKey: "b",
   accountId: "c",
   bucketName: "bucket",
-  publicDomain: "cdn.test",
 };
 
 const SETTINGS = {

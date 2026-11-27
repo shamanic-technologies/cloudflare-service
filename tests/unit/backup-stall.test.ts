@@ -43,7 +43,6 @@ const R2 = {
   secretAccessKey: "b",
   accountId: "c",
   bucketName: "bucket",
-  publicDomain: "cdn.test",
 };
 
 const LISTING = "215; 1259 16385 TABLE public leads postgres\n3412; 0 16385 TABLE DATA public leads postgres\n";

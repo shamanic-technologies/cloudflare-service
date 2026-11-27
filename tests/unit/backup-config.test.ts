@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+  BACKUP_BUCKET_KEY,
   DEFAULT_DB_KEY_PREFIX,
+  PUBLIC_BUCKET_KEY,
   databaseNameFromProvider,
   discoverTargets,
-  loadR2Config,
+  loadBackupR2Config,
   loadSettings,
   selectDatabaseProviders,
 } from "../../src/backup/config.js";
@@ -135,24 +137,44 @@ describe("backup config", () => {
     });
   });
 
-  describe("loadR2Config", () => {
-    it("reads the same platform keys the HTTP service uses", async () => {
+  describe("loadBackupR2Config", () => {
+    function stubDecrypt(missing: string[] = []) {
+      const asked: string[] = [];
       vi.stubGlobal(
         "fetch",
-        vi.fn(async (url: string) => ({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            provider: "x",
-            key: url.split("/keys/platform/")[1].replace("/decrypt", ""),
-          }),
-          text: async () => "",
-        }))
+        vi.fn(async (url: string) => {
+          const provider = url.split("/keys/platform/")[1].replace("/decrypt", "");
+          asked.push(provider);
+          if (missing.includes(provider)) {
+            return { ok: false, status: 404, json: async () => ({}), text: async () => "not found" };
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ provider, key: provider }),
+            text: async () => "",
+          };
+        })
       );
+      return asked;
+    }
 
-      const config = await loadR2Config();
+    it("resolves the PRIVATE bucket key, never the public one", async () => {
+      const asked = stubDecrypt();
+      const config = await loadBackupR2Config();
+      expect(BACKUP_BUCKET_KEY).toBe("cloudflare-r2-private-bucket-name");
+      expect(config.bucketName).toBe("cloudflare-r2-private-bucket-name");
       expect(config.accessKeyId).toBe("cloudflare-r2-access-key-id");
-      expect(config.bucketName).toBe("cloudflare-r2-bucket-name");
+      expect(asked).not.toContain("cloudflare-r2-bucket-name");
+      expect(asked).not.toContain(PUBLIC_BUCKET_KEY);
+      expect(asked).not.toContain("cloudflare-r2-public-domain");
+      expect(config).not.toHaveProperty("publicDomain");
+    });
+
+    it("fails loud when the private bucket key is missing, no public fallback", async () => {
+      const asked = stubDecrypt(["cloudflare-r2-private-bucket-name"]);
+      await expect(loadBackupR2Config()).rejects.toThrow(/not configured/);
+      expect(asked).not.toContain("cloudflare-r2-bucket-name");
     });
   });
 });

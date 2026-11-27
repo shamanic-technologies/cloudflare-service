@@ -1,13 +1,13 @@
 import { PassThrough } from "stream";
 import { spawn as nodeSpawn } from "child_process";
-import { discoverTargets, loadR2Config, loadSettings } from "./config.js";
+import { discoverTargets, loadBackupR2Config, loadSettings } from "./config.js";
+import type { BackupR2Config } from "./config.js";
 import type { BackupSettings, BackupTarget } from "./config.js";
 import { dumpDatabaseToR2 } from "./dump.js";
 import type { DumpManifest, SpawnFn } from "./dump.js";
 import { pruneDatabaseBackups } from "./retention.js";
 import type { PruneResult } from "./retention.js";
 import { getFromR2, listR2Objects, uploadStreamToR2 } from "../lib/r2-client.js";
-import type { R2Config } from "../lib/r2-client.js";
 import { errorReason } from "../lib/pg-error.js";
 
 /** R2-safe timestamp: 2026-08-07T031500Z (sortable, no colons). */
@@ -66,7 +66,7 @@ export async function readPgDumpMajorVersion(spawn: SpawnFn = nodeSpawn): Promis
 
 export const MINIMUM_PG_DUMP_MAJOR = 17;
 
-async function putJson(r2Config: R2Config, key: string, value: unknown): Promise<void> {
+async function putJson(r2Config: BackupR2Config, key: string, value: unknown): Promise<void> {
   const body = new PassThrough();
   body.end(Buffer.from(JSON.stringify(value, null, 2), "utf-8"));
   await uploadStreamToR2(r2Config, key, body, "application/json");
@@ -80,7 +80,7 @@ async function putJson(r2Config: R2Config, key: string, value: unknown): Promise
  * LOST every table is.
  */
 export async function readPreviousManifest(
-  r2Config: R2Config,
+  r2Config: BackupR2Config,
   params: { prefix: string; database: string; excludeKey: string }
 ): Promise<DumpManifest | null> {
   const objects = await listR2Objects(r2Config, `${params.prefix}/${params.database}/`);
@@ -113,7 +113,7 @@ export interface RunDeps {
   settings?: BackupSettings;
   now?: () => Date;
   spawnFn?: SpawnFn;
-  r2Config?: R2Config;
+  r2Config?: BackupR2Config;
   targets?: BackupTarget[];
 }
 
@@ -137,7 +137,7 @@ export async function runBackupJob(deps: RunDeps = {}): Promise<RunSummary> {
     );
   }
 
-  const r2Config = deps.r2Config ?? (await loadR2Config());
+  const r2Config = deps.r2Config ?? (await loadBackupR2Config());
   const targets = deps.targets ?? (await discoverTargets(settings));
 
   console.log(

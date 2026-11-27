@@ -49,7 +49,15 @@ The process itself exits 10 min after the run budget whatever hangs.
 A database that fails does not stop the others. Every failure is logged, sent to
 Sentry, written into the run summary, and makes the process exit non-zero.
 
-## Objects written
+## Objects written: PRIVATE bucket only
+
+Every backup object lives in the private R2 bucket named by platform key
+`cloudflare-r2-private-bucket-name` (`distribute-private`, no public domain).
+Upload, retention, manifest/toc reads and the run summary all resolve that key
+and nothing else; a missing key fails the run, it never falls back to the
+public files bucket (`cloudflare-r2-bucket-name`, served by r2.dev to anyone).
+Until 2026-11-27 dumps sat in the public bucket and were world-readable by URL
+(SECRETS-ROTATE-1127).
 
 ```
 pg-backups/<database>/<stamp>.dump           # pg_dump custom-format archive
@@ -93,6 +101,7 @@ is therefore a key-service change only.
 | `BACKUP_*_TIMEOUT_*` | see Time limits | |
 
 No database credential and no R2 credential is ever an env variable.
+The box helper `/root/distribute/verify-restore.py` must read the same private bucket.
 
 ## Alerting: red on dashboard v2 Monitoring
 
@@ -122,7 +131,7 @@ R2 has no egress fee, so a restore costs nothing.
 
 ```bash
 aws s3 cp --endpoint-url "https://$ACCOUNT_ID.r2.cloudflarestorage.com" \
-  "s3://$BUCKET/pg-backups/runs-service/2026-08-07T030000Z.dump" ./restore.dump
+  "s3://distribute-private/pg-backups/runs-service/2026-08-07T030000Z.dump" ./restore.dump
 
 pg_restore --list ./restore.dump | head            # what is in it
 pg_restore --no-owner --no-privileges \

@@ -8,15 +8,20 @@ import {
 import { Upload } from "@aws-sdk/lib-storage";
 import type { Readable } from "stream";
 
-export interface R2Config {
+/** Credentials + bucket: enough to read and write objects, no public URL. */
+export interface R2BucketConfig {
   accessKeyId: string;
   secretAccessKey: string;
   accountId: string;
   bucketName: string;
+}
+
+/** A bucket whose objects are served publicly under `publicDomain`. */
+export interface R2Config extends R2BucketConfig {
   publicDomain: string;
 }
 
-function createS3Client(config: R2Config): S3Client {
+function createS3Client(config: R2BucketConfig): S3Client {
   return new S3Client({
     region: "auto",
     endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
@@ -59,12 +64,12 @@ export async function uploadToR2(
  * take (default 32 MB).
  */
 export async function uploadStreamToR2(
-  config: R2Config,
+  config: R2BucketConfig,
   key: string,
   body: Readable,
   contentType?: string,
   options?: { partSizeBytes?: number; queueSize?: number; signal?: AbortSignal }
-): Promise<string> {
+): Promise<void> {
   const s3 = createS3Client(config);
 
   const upload = new Upload({
@@ -89,9 +94,6 @@ export async function uploadStreamToR2(
   } finally {
     signal?.removeEventListener("abort", onAbort);
   }
-
-  const domain = config.publicDomain.replace(/^https?:\/\//, "");
-  return `https://${domain}/${key}`;
 }
 
 export interface R2ListedObject {
@@ -102,7 +104,7 @@ export interface R2ListedObject {
 
 /** List every object under a prefix, following continuation tokens. */
 export async function listR2Objects(
-  config: R2Config,
+  config: R2BucketConfig,
   prefix: string
 ): Promise<R2ListedObject[]> {
   const s3 = createS3Client(config);
@@ -139,7 +141,7 @@ export interface R2Object {
 }
 
 export async function getFromR2(
-  config: R2Config,
+  config: R2BucketConfig,
   key: string
 ): Promise<R2Object | null> {
   const s3 = createS3Client(config);
@@ -164,7 +166,7 @@ export async function getFromR2(
 }
 
 export async function deleteFromR2(
-  config: R2Config,
+  config: R2BucketConfig,
   key: string
 ): Promise<void> {
   const s3 = createS3Client(config);

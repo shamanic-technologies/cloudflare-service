@@ -1,5 +1,5 @@
 import { decryptPlatformKey, listPlatformKeys } from "../lib/key-client.js";
-import type { R2Config } from "../lib/r2-client.js";
+import type { R2BucketConfig } from "../lib/r2-client.js";
 
 /**
  * Configuration surface for the daily Postgres backup job.
@@ -154,21 +154,40 @@ export async function discoverTargets(settings: BackupSettings): Promise<BackupT
   return targets;
 }
 
-/** R2 credentials come from the same platform keys the HTTP service uses. */
-export async function loadR2Config(): Promise<R2Config> {
-  const [accessKeyId, secretAccessKey, accountId, bucketName, publicDomain] = await Promise.all([
+/**
+ * Platform key naming the PRIVATE R2 bucket (no public domain) that holds every
+ * backup. Database dumps are private data: they never go to the public bucket
+ * (`cloudflare-r2-bucket-name`), whose r2.dev domain serves any object to anyone
+ * by URL (SECRETS-ROTATE-1127: every dump was world-readable).
+ */
+export const BACKUP_BUCKET_KEY = "cloudflare-r2-private-bucket-name";
+/** The public files bucket. Backups must never resolve it. */
+export const PUBLIC_BUCKET_KEY = "cloudflare-r2-bucket-name";
+
+/** Everything the backup job writes, lists, reads and prunes: private bucket only. */
+export type BackupR2Config = R2BucketConfig;
+
+/**
+ * R2 credentials for backups. The bucket comes ONLY from the private-bucket
+ * platform key; a missing key throws (key-service 404 -> decrypt error), never
+ * falls back to the public bucket. No public domain is read: a backup has no URL.
+ */
+export async function loadBackupR2Config(): Promise<BackupR2Config> {
+  const [accessKeyId, secretAccessKey, accountId, bucketName] = await Promise.all([
     decryptPlatformKey("cloudflare-r2-access-key-id", CALLER),
     decryptPlatformKey("cloudflare-r2-secret-access-key", CALLER),
     decryptPlatformKey("cloudflare-r2-account-id", CALLER),
-    decryptPlatformKey("cloudflare-r2-bucket-name", CALLER),
-    decryptPlatformKey("cloudflare-r2-public-domain", CALLER),
+    decryptPlatformKey(BACKUP_BUCKET_KEY, CALLER),
   ]);
+
+  if (!bucketName.key) {
+    throw new Error(`Platform key "${BACKUP_BUCKET_KEY}" is empty: refusing to back up`);
+  }
 
   return {
     accessKeyId: accessKeyId.key,
     secretAccessKey: secretAccessKey.key,
     accountId: accountId.key,
     bucketName: bucketName.key,
-    publicDomain: publicDomain.key,
   };
 }

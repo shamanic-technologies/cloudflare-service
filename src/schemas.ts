@@ -136,6 +136,7 @@ export const UploadResponseSchema = z.object({
 
 export const ErrorResponseSchema = z.object({
   error: z.string(),
+  code: z.string().optional(),
   reason: z.string().optional(),
 }).openapi("ErrorResponse");
 
@@ -143,7 +144,7 @@ registry.registerPath({
   method: "post",
   path: "/upload",
   summary: "Upload a file to R2",
-  description: "Downloads a file from a given URL and uploads it to Cloudflare R2",
+  description: "Downloads a media file (image, video, audio) from a PUBLIC internet URL and uploads it to Cloudflare R2. Private, loopback, link-local and internal-name addresses are refused at every redirect hop.",
   security: [{ [ApiKeyHeader.name]: [] }],
   request: {
     headers: z.object(identityHeaders),
@@ -157,7 +158,15 @@ registry.registerPath({
       content: { "application/json": { schema: UploadResponseSchema } },
     },
     400: {
-      description: "Invalid request",
+      description: "Invalid request, or sourceUrl refused (code source_url_not_public: not on the public internet)",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    413: {
+      description: "Source larger than 25 MB (code source_too_large)",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    415: {
+      description: "Source or contentType is not an image, video or audio type (code source_not_media)",
       content: { "application/json": { schema: ErrorResponseSchema } },
     },
     502: {

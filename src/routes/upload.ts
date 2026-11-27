@@ -18,6 +18,7 @@ import type { R2Config } from "../lib/r2-client.js";
 import { optimizeImageForEmail, EmailOptimizeError } from "../lib/email-image.js";
 import type { OptimizedImage } from "../lib/email-image.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { downloadSource, isMediaType, SourceRefusedError } from "../lib/source-download.js";
 import { extractForwardHeaders } from "../lib/forward-headers.js";
 import { db } from "../db/index.js";
 import { files } from "../db/schema.js";
@@ -87,26 +88,42 @@ router.post("/upload", serviceAuth, async (req, res: Response) => {
 
     traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:start", detail: `sourceUrl=${sourceUrl}` }, req.headers);
 
-    // Download file from sourceUrl
+    // A caller-declared type is stored as the object's Content-Type on the
+    // PUBLIC bucket: media only (SSRF-1127).
+    if (contentType && !isMediaType(contentType)) {
+      console.warn(`${logPrefix} Refused contentType=${contentType}`);
+      res.status(415).json({ error: "Upload refused", code: "source_not_media", reason: "contentType must be an image, video or audio type" });
+      await updateRun(childRun.id, "failed", identity);
+      return;
+    }
+
+    // Download file from sourceUrl: public internet only, media only (SSRF-1127).
     console.log(`${logPrefix} Downloading from sourceUrl=${sourceUrl}`);
     const fetchStart = Date.now();
-    const sourceResponse = await fetch(sourceUrl);
+    let download: Awaited<ReturnType<typeof downloadSource>>;
+    try {
+      download = await downloadSource(sourceUrl);
+    } catch (err) {
+      if (!(err instanceof SourceRefusedError)) throw err;
+      console.warn(`${logPrefix} Source refused — code=${err.code}, url=${sourceUrl}`);
+      traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:source-refused", level: "warn", detail: err.code }, req.headers);
+      res.status(err.status).json({ error: "Upload refused", code: err.code, reason: err.message });
+      await updateRun(childRun.id, "failed", identity);
+      return;
+    }
     const fetchMs = Date.now() - fetchStart;
-    if (!sourceResponse.ok) {
-      console.error(`${logPrefix} Source URL failed — status=${sourceResponse.status}, url=${sourceUrl}, fetchMs=${fetchMs}`);
+    if (!download.ok) {
+      console.error(`${logPrefix} Source URL failed — status=${download.status}, url=${sourceUrl}, fetchMs=${fetchMs}`);
       res.status(502).json({
         error: "Upload failed",
-        reason: `Source URL returned ${sourceResponse.status}`,
+        reason: `Source URL returned ${download.status}`,
       });
       await updateRun(childRun.id, "failed", identity);
       return;
     }
 
-    const sourceBuffer = Buffer.from(await sourceResponse.arrayBuffer());
-    const sourceContentType =
-      contentType ||
-      sourceResponse.headers.get("content-type") ||
-      "application/octet-stream";
+    const sourceBuffer = download.buffer;
+    const sourceContentType = contentType || download.contentType;
 
     console.log(`${logPrefix} Downloaded ${sourceBuffer.length} bytes in ${fetchMs}ms — contentType=${sourceContentType}`);
     traceEvent(childRun.id, { service: "cloudflare-service", event: "upload:downloaded", data: { bytes: sourceBuffer.length, fetchMs } }, req.headers);

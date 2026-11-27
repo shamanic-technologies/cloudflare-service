@@ -65,6 +65,7 @@ import { authorizeCustomerBalance } from "../../src/lib/billing-client.js";
 import { decryptKey, decryptPlatformKey } from "../../src/lib/key-client.js";
 import { uploadToR2 } from "../../src/lib/r2-client.js";
 import { db } from "../../src/db/index.js";
+import { setPublicFetchTestDefaults } from "../../src/lib/safe-fetch.js";
 
 function createApp() {
   const app = express();
@@ -82,13 +83,21 @@ const authHeaders = {
 };
 
 function mockFetchResponse(overrides: Partial<{ ok: boolean; status: number; contentType: string; body: ArrayBuffer }> = {}) {
-  const { ok = true, status = 200, contentType = "video/mp4", body = new ArrayBuffer(1024) } = overrides;
-  return {
-    ok,
-    status,
-    headers: { get: (_name: string) => contentType },
-    arrayBuffer: () => Promise.resolve(body),
-  };
+  const { status: givenStatus, ok = true, contentType = "video/mp4", body = new ArrayBuffer(1024) } = overrides;
+  const status = givenStatus ?? (ok ? 200 : 500);
+  return new Response(body, { status, headers: { "content-type": contentType } });
+}
+
+/**
+ * The source download goes through `publicFetch` (SSRF-1127): resolve every
+ * test host to a public address and hand the pinned hop to the mocked global
+ * `fetch`, so a test still stubs the source answer with `globalThis.fetch`.
+ */
+function routeSourceDownloadsThroughGlobalFetch() {
+  setPublicFetchTestDefaults({
+    resolve: async () => [{ address: "93.184.215.14", family: 4 }],
+    transport: (hop, req) => globalThis.fetch(hop.url.href, { method: req.method, headers: req.headers }),
+  });
 }
 
 function toArrayBuffer(buf: Buffer): ArrayBuffer {
@@ -113,6 +122,7 @@ describe("POST /upload", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    routeSourceDownloadsThroughGlobalFetch();
     process.env.CLOUDFLARE_SERVICE_API_KEY = "test-api-key";
     vi.mocked(decryptKey).mockResolvedValue({ key: "mock-key", keySource: "platform" });
     vi.mocked(authorizeCustomerBalance).mockResolvedValue({
@@ -496,11 +506,11 @@ describe("POST /upload", () => {
     expect(config).toBeDefined();
   });
 
-  it("optimizeFor=email rejects a non-image source with 400", async () => {
+  it("optimizeFor=email rejects a source that is not a decodable image with 400", async () => {
     const text = Buffer.from("this is a plain text file");
     globalThis.fetch = vi
       .fn()
-      .mockResolvedValue(mockFetchResponse({ contentType: "text/plain", body: toArrayBuffer(text) })) as never;
+      .mockResolvedValue(mockFetchResponse({ contentType: "image/png", body: toArrayBuffer(text) })) as never;
 
     const app = createApp();
     const res = await request(app).post("/upload").set(authHeaders).send({

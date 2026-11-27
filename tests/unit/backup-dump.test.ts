@@ -21,7 +21,6 @@ const R2 = {
   secretAccessKey: "b",
   accountId: "c",
   bucketName: "bucket",
-  publicDomain: "cdn.test",
 };
 
 const LIMITS = { stallTimeoutMs: 60_000, deadlineMs: 600_000, lockWaitTimeoutMs: 120_000 };

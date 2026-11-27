@@ -1,5 +1,6 @@
 import { deleteFromR2, listR2Objects } from "../lib/r2-client.js";
-import type { R2Config, R2ListedObject } from "../lib/r2-client.js";
+import type { R2ListedObject } from "../lib/r2-client.js";
+import type { BackupR2Config } from "./config.js";
 
 /**
  * Retention for the R2 dump archive. Dumps accumulate forever otherwise, and R2
@@ -64,7 +65,7 @@ export interface PruneResult {
 }
 
 export async function pruneDatabaseBackups(
-  r2Config: R2Config,
+  r2Config: BackupR2Config,
   params: { database: string; prefix: string; now: Date; retentionDays: number; minKeep: number }
 ): Promise<PruneResult> {
   const objects = await listR2Objects(r2Config, `${params.prefix}/${params.database}/`);

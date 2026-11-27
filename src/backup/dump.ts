@@ -3,7 +3,7 @@ import type { ChildProcess } from "child_process";
 import { createHash } from "crypto";
 import { PassThrough } from "stream";
 import { uploadStreamToR2 } from "../lib/r2-client.js";
-import type { R2Config } from "../lib/r2-client.js";
+import type { BackupR2Config } from "./config.js";
 
 /**
  * One database dump: pg_dump's stdout is streamed straight into an R2
@@ -125,7 +125,7 @@ export async function dumpDatabaseToR2(
   params: {
     database: string;
     dsn: string;
-    r2Config: R2Config;
+    r2Config: BackupR2Config;
     r2Key: string;
     tocKey: string;
   },
@@ -243,13 +243,13 @@ export async function dumpDatabaseToR2(
 
   let dumpExit: ChildExit;
   let listExit: ChildExit;
-  let uploadResult: { ok: true; url: string } | { ok: false; err: unknown };
+  let uploadResult: { ok: true } | { ok: false; err: unknown };
   try {
     [dumpExit, listExit, uploadResult] = await Promise.all([
       exitOf(dump),
       exitOf(list),
       uploadPromise.then(
-        (url) => ({ ok: true as const, url }),
+        () => ({ ok: true as const }),
         (err: unknown) => ({ ok: false as const, err })
       ),
     ]);

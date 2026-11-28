@@ -1,7 +1,18 @@
 const KEY_SERVICE_URL = process.env.KEY_SERVICE_URL || "http://localhost:3001";
 const KEY_SERVICE_API_KEY = process.env.KEY_SERVICE_API_KEY;
 
+/**
+ * Caller name sent to key-service as `X-Caller-Service`.
+ * - `cloudflare-storage`: the live HTTP service (upload, images, files).
+ * - `pg-backup`: the twice-daily Postgres backup job (src/backup). key-service
+ *   knows it as an own job allowed to read ONLY `pg-backup-dsn-*` and the
+ *   private R2 keys; any other key read under this name alerts as a stranger.
+ */
+export type CallerService = "cloudflare-storage" | "pg-backup";
+
 interface CallerContext {
+  /** Defaults to the live service's name, `cloudflare-storage`. */
+  callerService?: CallerService;
   callerMethod: string;
   callerPath: string;
   campaignId?: string;
@@ -22,7 +33,7 @@ export async function decryptKey(
       ...(KEY_SERVICE_API_KEY ? { "X-Api-Key": KEY_SERVICE_API_KEY } : {}),
       "x-org-id": orgId,
       "x-user-id": userId,
-      "X-Caller-Service": "cloudflare-storage",
+      "X-Caller-Service": caller.callerService ?? "cloudflare-storage",
       "X-Caller-Method": caller.callerMethod,
       "X-Caller-Path": caller.callerPath,
       ...(caller.campaignId ? { "x-campaign-id": caller.campaignId } : {}),
@@ -50,11 +61,11 @@ export async function decryptKey(
  * Used by the backup job to discover which databases to dump without any
  * hardcoded list.
  */
-export async function listPlatformKeys(): Promise<string[]> {
+export async function listPlatformKeys(callerService: CallerService): Promise<string[]> {
   const response = await fetch(`${KEY_SERVICE_URL}/platform-keys`, {
     headers: {
       ...(KEY_SERVICE_API_KEY ? { "X-Api-Key": KEY_SERVICE_API_KEY } : {}),
-      "X-Caller-Service": "cloudflare-storage",
+      "X-Caller-Service": callerService,
       "X-Caller-Method": "GET",
       "X-Caller-Path": "/platform-keys",
     },
@@ -81,7 +92,7 @@ export async function decryptPlatformKey(
   const response = await fetch(`${KEY_SERVICE_URL}/keys/platform/${provider}/decrypt`, {
     headers: {
       ...(KEY_SERVICE_API_KEY ? { "X-Api-Key": KEY_SERVICE_API_KEY } : {}),
-      "X-Caller-Service": "cloudflare-storage",
+      "X-Caller-Service": caller.callerService ?? "cloudflare-storage",
       "X-Caller-Method": caller.callerMethod,
       "X-Caller-Path": caller.callerPath,
       ...(caller.campaignId ? { "x-campaign-id": caller.campaignId } : {}),

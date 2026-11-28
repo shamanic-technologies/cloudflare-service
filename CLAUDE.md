@@ -16,6 +16,10 @@ backup job (`src/backup`, see `docs/pg-backups.md`).
 - Why: until 2026-11-27 every nightly dump sat in the public bucket,
   world-readable (SECRETS-ROTATE-1127). `tests/unit/backup-config.test.ts`
   pins that the backup path never asks for the public key.
+- The backup calls key-service as caller `pg-backup` (`BACKUP_CALLER_SERVICE`),
+  never `cloudflare-storage`. key-service lets that name read only
+  `pg-backup-dsn-*` + the four private R2 keys without an intrusion alert;
+  any other key read under it alerts. Never widen what the backup decrypts.
 
 ## Rule: a caller-supplied URL is fetched only through `downloadSource`
 

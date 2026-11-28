@@ -41,6 +41,35 @@ describe("key-client", () => {
     expect(headers["x-user-id"]).toBeUndefined();
   });
 
+  it("the storage service's org decrypt keeps X-Caller-Service: cloudflare-storage", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ key: "k", keySource: "org" }),
+    }) as never;
+
+    const { decryptKey } = await import("../../src/lib/key-client.js");
+    await decryptKey("cloudflare-r2-bucket-name", "org-1", "user-1", {
+      callerMethod: "POST",
+      callerPath: "/upload",
+    });
+
+    const headers = (vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers["X-Caller-Service"]).toBe("cloudflare-storage");
+  });
+
+  it("listPlatformKeys sends the caller name it is given", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ keys: [{ provider: "pg-backup-dsn-a" }] }),
+    }) as never;
+
+    const { listPlatformKeys } = await import("../../src/lib/key-client.js");
+    expect(await listPlatformKeys("pg-backup")).toEqual(["pg-backup-dsn-a"]);
+
+    const headers = (vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers["X-Caller-Service"]).toBe("pg-backup");
+  });
+
   it("decryptPlatformKey fails loud when the platform key is missing", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,

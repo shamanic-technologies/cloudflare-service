@@ -122,7 +122,17 @@ export interface BackupTarget {
   dsn: string;
 }
 
+/**
+ * The backup identifies itself to key-service as `pg-backup`, never as the
+ * live `cloudflare-storage` service: key-service treats `pg-backup` reads of
+ * its own keys (`pg-backup-dsn-*` + the private R2 keys) as an own job and
+ * sends no intrusion alert (BACKUP-CALLER-NAME-1128). Reading any other key
+ * under this name alerts, so the job reads nothing beyond that list.
+ */
+export const BACKUP_CALLER_SERVICE = "pg-backup" as const;
+
 const CALLER = {
+  callerService: BACKUP_CALLER_SERVICE,
   callerMethod: "CRON",
   callerPath: "/jobs/pg-backup",
 };
@@ -134,7 +144,7 @@ const CALLER = {
  * prevent.
  */
 export async function discoverTargets(settings: BackupSettings): Promise<BackupTarget[]> {
-  const providers = selectDatabaseProviders(await listPlatformKeys(), settings.dbKeyPrefix);
+  const providers = selectDatabaseProviders(await listPlatformKeys(BACKUP_CALLER_SERVICE), settings.dbKeyPrefix);
 
   if (providers.length === 0) {
     throw new Error(

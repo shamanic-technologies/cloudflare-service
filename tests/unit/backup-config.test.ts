@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   BACKUP_BUCKET_KEY,
+  BACKUP_CALLER_SERVICE,
   DEFAULT_DB_KEY_PREFIX,
   PUBLIC_BUCKET_KEY,
   databaseNameFromProvider,
@@ -134,6 +135,61 @@ describe("backup config", () => {
       await expect(discoverTargets(loadSettings())).rejects.toThrow(
         /not a Postgres connection string/
       );
+    });
+  });
+
+  describe("caller name toward key-service (BACKUP-CALLER-NAME-1128)", () => {
+    // key-service knows `pg-backup` as an own job allowed to read exactly these keys;
+    // any other key under that name alerts as a stranger borrowing the name.
+    const ALLOWED_EXACT = new Set([
+      "cloudflare-r2-access-key-id",
+      "cloudflare-r2-secret-access-key",
+      "cloudflare-r2-account-id",
+      "cloudflare-r2-private-bucket-name",
+    ]);
+
+    function stubRecording() {
+      const calls: { url: string; caller: string }[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit) => {
+          const headers = init.headers as Record<string, string>;
+          calls.push({ url, caller: headers["X-Caller-Service"] });
+          const body = url.endsWith("/platform-keys")
+            ? { keys: [{ provider: "pg-backup-dsn-runs-service" }, { provider: "openai" }] }
+            : (() => {
+                const provider = url.split("/keys/platform/")[1].replace("/decrypt", "");
+                return { provider, key: `postgres://user@host/${provider}` };
+              })();
+          return { ok: true, status: 200, json: async () => body, text: async () => "" };
+        })
+      );
+      return calls;
+    }
+
+    it("sends X-Caller-Service: pg-backup on the platform key list and every decrypt", async () => {
+      const calls = stubRecording();
+      expect(BACKUP_CALLER_SERVICE).toBe("pg-backup");
+
+      await discoverTargets(loadSettings());
+      await loadBackupR2Config();
+
+      expect(calls.some((c) => c.url.endsWith("/platform-keys"))).toBe(true);
+      expect(calls.filter((c) => c.url.includes("/decrypt")).length).toBe(5);
+      for (const c of calls) expect(c.caller).toBe("pg-backup");
+    });
+
+    it("decrypts only keys key-service allows the pg-backup name to read", async () => {
+      const calls = stubRecording();
+      await discoverTargets(loadSettings());
+      await loadBackupR2Config();
+
+      const decrypted = calls
+        .filter((c) => c.url.includes("/decrypt"))
+        .map((c) => c.url.split("/keys/platform/")[1].replace("/decrypt", ""));
+      for (const provider of decrypted) {
+        expect(provider.startsWith("pg-backup-dsn-") || ALLOWED_EXACT.has(provider)).toBe(true);
+      }
     });
   });
 
